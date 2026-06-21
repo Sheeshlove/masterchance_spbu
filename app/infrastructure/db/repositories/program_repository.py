@@ -45,7 +45,8 @@ class ProgramRepository:
             name=prog.name,
             department_code=prog.department_code,
             is_ino=prog.is_ino,
-            is_international=prog.is_international
+            is_international=prog.is_international,
+            university=prog.university
         )
 
     @staticmethod
@@ -67,7 +68,8 @@ class ProgramRepository:
             name=model.name,
             department_code=model.department_code,
             is_ino=model.is_ino,
-            is_international=model.is_international
+            is_international=model.is_international,
+            university=model.university
         )
 
     @staticmethod
@@ -81,7 +83,7 @@ class ProgramRepository:
 
     @staticmethod
     def _to_applicant_model(a: Applicant) -> ApplicantModel:
-        return ApplicantModel(id=a.id)
+        return ApplicantModel(id=a.id, university=a.university)
 
     @staticmethod
     def _to_application_model(app: Application) -> ApplicationModel:
@@ -110,7 +112,7 @@ class ProgramRepository:
 
     @staticmethod
     def _to_applicant_domain(m: ApplicantModel) -> Applicant:
-        return Applicant(id=m.id)
+        return Applicant(id=m.id, university=m.university)
 
     @staticmethod
     def _to_application_domain(m: ApplicationModel) -> Application:
@@ -255,6 +257,16 @@ class ProgramRepository:
         )
         return [self._to_program_domain(m) for m in models]
 
+    def get_programs_by_university(self, university: str) -> list[Program]:
+        """Все программы заданного вуза ('spbpu' | 'spbgu')."""
+        models = (
+            self._session
+            .query(ProgramModel)
+            .filter_by(university=university)
+            .all()
+        )
+        return [self._to_program_domain(m) for m in models]
+
     def add_submission_stats(self, stats: SubmissionStats) -> None:
         orm = self._to_stats_model(stats)
         self._session.merge(orm)
@@ -383,16 +395,17 @@ class ProgramRepository:
             delete(ApplicationModel).where(ApplicationModel.program_code == program_code)
         )
 
-    def add_applicants_bulk(self, applicant_ids: Iterable[str]) -> None:
+    def add_applicants_bulk(self, applicant_ids: Iterable[str], university: str = "spbpu") -> None:
         """
         Массовое добавление / UPSERT абитуриентов.
-        Работает быстро и без повторов.
+        Работает быстро и без повторов. university тегирует вуз-источник.
         """
-        if not applicant_ids:
+        ids = set(applicant_ids)
+        if not ids:
             return
 
         stmt = sqlite_upsert(ApplicantModel).values(
-            [{"id": aid} for aid in set(applicant_ids)]
+            [{"id": aid, "university": university} for aid in ids]
         ).on_conflict_do_nothing(index_elements=["id"])
         self._session.execute(stmt)
 
@@ -434,19 +447,21 @@ class ProgramRepository:
         )
         self._session.execute(upsert_stmt)
 
-    def get_program_meta_df(self) -> "pd.DataFrame":
+    def get_program_meta_df(self, university: str | None = None) -> "pd.DataFrame":
         """
         Вернуть DataFrame:
             program_code | department_code | is_international
         Используется Monte‑Carlo для построения exam_id.
+        Если задан university — только программы этого вуза.
         """
-        rows = (
-            self._session.query(
-                ProgramModel.code,
-                ProgramModel.department_code,
-                ProgramModel.is_international,
-            ).all()
+        q = self._session.query(
+            ProgramModel.code,
+            ProgramModel.department_code,
+            ProgramModel.is_international,
         )
+        if university is not None:
+            q = q.filter(ProgramModel.university == university)
+        rows = q.all()
         return pd.DataFrame(
             rows, columns=["program_code", "department_code", "is_international"]
         )

@@ -32,6 +32,15 @@ class Settings(BaseSettings):
 
     parser_parallelism: int = Field(8, alias="PARSER_PARALLELISM")
 
+    # ───────────────── Источник данных: вуз ───────────────────────────
+    # Какой вуз обновляем/обслуживаем по умолчанию: 'spbpu' (Политех) или
+    # 'spbgu' (СПбГУ). Скрипты обновления могут переопределять через CLI.
+    university: Literal["spbpu", "spbgu"] = Field("spbpu", alias="UNIVERSITY")
+    # Базовый URL рейтинговых списков магистратуры СПбГУ (Фаза 0 уточняет путь).
+    spbgu_base_url: str = Field(
+        "https://cabinet.spbu.ru/Lists/AG_Rating/", alias="SPBGU_BASE_URL"
+    )
+
     # БД
     db_url: str | None = Field(None, alias="DATABASE_URL")
     db_filename: str = Field("master.db", alias="DB_FILENAME")

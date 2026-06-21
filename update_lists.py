@@ -13,7 +13,12 @@ from app.infrastructure.db.repositories.program_repository import ProgramReposit
 
 
 def main():
-    logger.info("=== masterchance старт ===")
+    # вуз-источник: из конфига (UNIVERSITY), с возможностью переопределить CLI-аргументом
+    university = settings.university
+    for arg in sys.argv[1:]:
+        if arg.startswith("--university="):
+            university = arg.split("=", 1)[1].strip().lower()
+    logger.info("=== masterchance старт (вуз=%s) ===", university)
     # 1) Настройка БД
     engine = create_engine(
         settings.database_url,
@@ -31,7 +36,7 @@ def main():
     # 3) Запуск
     try:
         parallelism = settings.parser_parallelism
-        updater.execute_parallel(parallelism=parallelism, headless=True)
+        updater.execute_parallel(parallelism=parallelism, headless=True, university=university)
         logger.info("Данные по подаче заявлений успешно обновлены.")
         print("✅ Данные по подаче заявлений успешно обновлены.")
     except Exception as e:
