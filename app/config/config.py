@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # ───────────────── Monte-Carlo: «отток» сильных ───────────────────
     # Включение механики оттока (True — включено, False — legacy-поведение).
-    opt_out_enabled: bool = Field(False, alias="MC_OPTOUT_ENABLED")
+    opt_out_enabled: bool = Field(True, alias="MC_OPTOUT_ENABLED")
     # Доля выбывающих среди тех, у кого НИГДЕ нет согласия (consent=False по всем его заявлениям).
     # Значение 0.2 означает «ровно 20% из пула E будем исключать в каждой симуляции».
     opt_out_ratio: float = Field(0.20, alias="MC_OPTOUT_RATIO")

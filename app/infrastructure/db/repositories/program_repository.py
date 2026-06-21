@@ -145,6 +145,14 @@ class ProgramRepository:
         )
 
     @staticmethod
+    def _to_diag_model(d: AdmissionDiagnostics) -> AdmissionDiagnosticsModel:
+        return AdmissionDiagnosticsModel(
+            applicant_id=d.applicant_id,
+            p_excluded=d.p_excluded,
+            p_fail_when_included=d.p_fail_when_included,
+        )
+
+    @staticmethod
     def _to_exam_session_model(e: ExamSession) -> ExamSessionModel:
         return ExamSessionModel(
             program_code=e.program_code,

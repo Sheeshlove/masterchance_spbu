@@ -6,7 +6,7 @@ import pandas as pd
 
 from app.config.config import settings
 from app.config.logger import logger
-from app.domain.models import ProgramPassingQuantile, AdmissionProbability
+from app.domain.models import ProgramPassingQuantile, AdmissionProbability, AdmissionDiagnostics
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.services.admission_monte_carlo import AdmissionMonteCarlo
 
@@ -74,16 +74,25 @@ class RecalculateMonteCarloUseCase:
                 for prog, prob in mapping.items()
             ])
 
+        diag_models: List[AdmissionDiagnostics] = [
+            AdmissionDiagnostics(applicant_id=aid,
+                                 p_excluded=vals["p_excluded"],
+                                 p_fail_when_included=vals["p_fail_when_included"])
+            for aid, vals in monte.get_diagnostics().items()
+        ]
+
         logger.info("→ Очистка старых Monte‑Carlo результатов…")
         self._repo.clear_admission_probabilities()
         self._repo.clear_program_quantiles()
+        self._repo.clear_admission_diagnostics()
         self._repo.commit()
 
-        logger.info("→ Сохраняем: probabilities=%d, quantiles=%d",
-                    len(prob_models), len(quant_models))
+        logger.info("→ Сохраняем: probabilities=%d, quantiles=%d, diagnostics=%d",
+                    len(prob_models), len(quant_models), len(diag_models))
 
         self._repo.add_program_quantiles_bulk(quant_models)
         self._repo.add_admission_probabilities_bulk(prob_models)
+        self._repo.add_admission_diagnostics_bulk(diag_models)
         self._repo.commit()
 
         logger.info("Monte‑Carlo результаты обновлены в БД.")
