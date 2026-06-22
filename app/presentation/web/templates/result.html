@@ -1,0 +1,43 @@
+{% if not_found %}
+  <div class="notice notice-empty">
+    Не найдено заявок для абитуриента <code>{{ not_found }}</code>.
+    Проверь код и попробуй ещё раз.
+  </div>
+{% elif view %}
+  <section class="result">
+    <div class="result-head">
+      <h2>Абитуриент <code>{{ view.applicant_id }}</code></h2>
+      {% if view.university %}<span class="badge">{{ view.university }}</span>{% endif %}
+    </div>
+
+    <div class="cards">
+      {% for it in view.programs %}
+      <article class="card">
+        <div class="card-top">
+          <span class="dept">{{ it.dept }}</span>
+          <h3 class="pname">{{ it.name }}</h3>
+        </div>
+
+        <div class="prob">
+          <div class="prob-row">
+            <span class="prob-label">Шанс зачисления</span>
+            <span class="prob-val">{{ it.prob_pct }}</span>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width: {{ it.prob_width }}%"></div></div>
+          <div class="passing muted small">Проходной (90–95%): <b>{{ it.qrange }}</b></div>
+        </div>
+
+        <div class="exam exam-{{ it.exam.cls }}">
+          <span class="exam-icon">{{ it.exam.icon }}</span>
+          <span class="exam-text">{{ it.exam.text }}</span>
+          {% if it.exam.warn %}<div class="exam-warn">⚠️ {{ it.exam.warn }}</div>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+
+    <div class="fail">
+      🚫 <b>«Пролетел с магой»</b>: в <b>{{ view.fail_pct }}</b> симуляций не прошёл никуда.
+    </div>
+  </section>
+{% endif %}

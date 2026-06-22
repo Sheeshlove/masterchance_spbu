@@ -1,0 +1,125 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #20242d;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #5b8cff;
+  --ok: #46d36b;
+  --wait: #f2c14e;
+  --done: #8b93a3;
+  --danger: #ff6b6b;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: var(--panel-2); padding: 1px 6px; border-radius: 6px; font-size: .95em; }
+
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 20px; border-bottom: 1px solid #262b35;
+}
+.brand { font-weight: 700; font-size: 1.15rem; }
+.topbar nav a { color: var(--muted); }
+
+.container { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+
+.hero h1 { font-size: 1.7rem; margin: 8px 0 6px; }
+.muted { color: var(--muted); }
+.small { font-size: .9rem; }
+
+.lookup {
+  display: flex; gap: 10px; margin: 18px 0 8px; flex-wrap: wrap;
+}
+.lookup input {
+  flex: 1 1 240px; min-width: 0;
+  padding: 12px 14px; font-size: 1rem;
+  background: var(--panel); color: var(--text);
+  border: 1px solid #2c313c; border-radius: 12px;
+}
+.lookup input:focus { outline: none; border-color: var(--accent); }
+.lookup button {
+  padding: 12px 18px; font-size: 1rem; font-weight: 600;
+  background: var(--accent); color: #fff; border: none; border-radius: 12px; cursor: pointer;
+}
+.lookup button:hover { filter: brightness(1.05); }
+
+.htmx-indicator { opacity: 0; align-self: center; color: var(--muted); }
+.htmx-request .htmx-indicator { opacity: 1; }
+
+.notice {
+  margin-top: 22px; padding: 16px 18px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid #2c313c;
+}
+.notice-empty { color: var(--muted); }
+
+.result { margin-top: 26px; }
+.result-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.result-head h2 { font-size: 1.15rem; margin: 0; }
+.badge {
+  font-size: .8rem; color: var(--accent);
+  border: 1px solid var(--accent); padding: 2px 10px; border-radius: 999px;
+}
+
+.cards { display: grid; gap: 14px; }
+.card {
+  background: var(--panel); border: 1px solid #262b35;
+  border-radius: var(--radius); padding: 16px 18px;
+}
+.card-top { margin-bottom: 12px; }
+.dept { font-size: .8rem; color: var(--muted); letter-spacing: .03em; }
+.pname { margin: 2px 0 0; font-size: 1.08rem; }
+
+.prob-row { display: flex; justify-content: space-between; align-items: baseline; }
+.prob-label { color: var(--muted); font-size: .9rem; }
+.prob-val { font-size: 1.25rem; font-weight: 700; }
+.bar {
+  height: 9px; background: var(--panel-2); border-radius: 999px;
+  overflow: hidden; margin: 7px 0;
+}
+.bar-fill {
+  height: 100%; background: linear-gradient(90deg, #4f7cff, #6fd3ff);
+  border-radius: 999px;
+}
+.passing { margin-top: 2px; }
+
+.exam {
+  margin-top: 12px; padding: 8px 12px; border-radius: 10px;
+  background: var(--panel-2); font-size: .92rem;
+  display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap;
+}
+.exam-icon { line-height: 1.4; }
+.exam-warn { width: 100%; color: var(--wait); font-size: .85rem; margin-top: 4px; }
+.exam-ok { border-left: 3px solid var(--ok); }
+.exam-wait { border-left: 3px solid var(--wait); }
+.exam-done { border-left: 3px solid var(--done); }
+
+.fail {
+  margin-top: 18px; padding: 14px 16px; border-radius: var(--radius);
+  background: rgba(255, 107, 107, .08); border: 1px solid rgba(255, 107, 107, .35);
+}
+
+.prose h1 { font-size: 1.5rem; }
+.prose ul, .prose ol { padding-left: 22px; }
+.prose li { margin: 4px 0; }
+.warnbox {
+  padding: 12px 14px; border-radius: 10px;
+  background: rgba(242, 193, 78, .1); border: 1px solid rgba(242, 193, 78, .35);
+}
+
+.footer {
+  max-width: 760px; margin: 0 auto; padding: 18px 16px 40px;
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  color: var(--muted); font-size: .85rem; border-top: 1px solid #262b35;
+}

@@ -28,6 +28,8 @@ class ProgramModel(Base):
     department_code = Column(String, ForeignKey('departments.code'), nullable=False)
     is_ino = Column(Boolean, default=False, nullable=False)
     is_international = Column(Boolean, default=False, nullable=False)
+    # Вуз-источник: 'spbpu' (Политех) | 'spbgu' (СПбГУ)
+    university = Column(String, nullable=False, default='spbpu', server_default='spbpu', index=True)
     department = relationship('DepartmentModel', back_populates='programs')
 
 
@@ -46,6 +48,8 @@ ProgramModel.stats = relationship('SubmissionStatsModel', uselist=False, back_po
 class ApplicantModel(Base):
     __tablename__ = 'applicants'
     id = Column(String, primary_key=True)
+    # Вуз-источник абитуриента: 'spbpu' | 'spbgu'
+    university = Column(String, nullable=False, default='spbpu', server_default='spbpu', index=True)
 
 
 class ApplicationModel(Base):

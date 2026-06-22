@@ -37,14 +37,22 @@ def _kde_resample(kde: gaussian_kde, n: int, rng: np.random.Generator) -> np.nda
 @njit(cache=True)
 def _simulate_admission_numba(priority, program_idx, applicant_idx,
                               total_score, seats_init, jitter,
-                              max_priority) -> Tuple[np.ndarray, np.ndarray]:
+                              active, max_priority) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Быстрая симуляция распределения мест:
-      • по приоритетам 1..max_priority;
-      • 'jitter' ломает тай-брейки.
-    Возвращает:
+    Симуляция распределения мест алгоритмом отложенного согласия
+    (student-proposing Gale–Shapley):
+      • список предпочтений каждого абитуриента — его заявки по возрастанию приоритета;
+      • программа держит лучших по баллу в пределах мест, выбитые «протекают» вниз
+        по своим менее приоритетным заявкам;
+      • 'jitter' ломает тай-брейки (равные баллы → жребий);
+      • 'active' (Uint8 по абитуриентам) — маска присутствия: неактивные («ушли в
+        другой вуз») не предлагают себя, не зачисляются и освобождают места.
+    Возвращает устойчивое паросочетание:
       admitted[A] = p_idx или -1
       passing[P]  = худший (минимальный) принятый балл или -1, если мест нет.
+
+    `max_priority` сохранён в сигнатуре для совместимости с вызовом и больше
+    не используется: порядок задаётся персональными списками предпочтений.
     """
     A = applicant_idx.max() + 1
     P = seats_init.size
@@ -53,10 +61,44 @@ def _simulate_admission_numba(priority, program_idx, applicant_idx,
     admitted = np.full(A, -1, np.int32)
     passing = np.full(P, -1, np.int16)
 
-    max_seats = np.max(seats_init)
-    seat_cnt = np.zeros(P, np.int32)
-    seats_left = seats_init.copy()
+    # --- CSR-раскладка заявок по абитуриентам --------------------------------
+    app_count = np.zeros(A, np.int32)
+    for i in range(N):
+        app_count[applicant_idx[i]] += 1
+    app_off = np.zeros(A + 1, np.int32)
+    for a in range(A):
+        app_off[a + 1] = app_off[a] + app_count[a]
+    app_rows = np.empty(N, np.int32)
+    cursor = np.empty(A, np.int32)
+    for a in range(A):
+        cursor[a] = app_off[a]
+    for i in range(N):
+        a = applicant_idx[i]
+        app_rows[cursor[a]] = i
+        cursor[a] += 1
+    # список предпочтений = заявки по возрастанию приоритета (insertion sort)
+    for a in range(A):
+        start = app_off[a]
+        end = app_off[a + 1]
+        for x in range(start + 1, end):
+            key_row = app_rows[x]
+            kp = priority[key_row]
+            y = x - 1
+            while y >= start and priority[app_rows[y]] > kp:
+                app_rows[y + 1] = app_rows[y]
+                y -= 1
+            app_rows[y + 1] = key_row
 
+    # --- ранг строки: балл с тай-брейком по jitter ---------------------------
+    rank = np.empty(N, np.int32)
+    for i in range(N):
+        rank[i] = np.int32(total_score[i]) * RANK_SCALE + np.int32(jitter[i] * RANK_SCALE)
+
+    max_seats = np.max(seats_init)
+    if max_seats < 1:
+        return admitted, passing
+
+    seat_cnt = np.zeros(P, np.int32)
     tab_app = np.full((P, max_seats), -1, np.int32)
     tab_score = np.full((P, max_seats), -1, np.int16)
     tab_rank = np.full((P, max_seats), 0, np.int32)
@@ -65,52 +107,73 @@ def _simulate_admission_numba(priority, program_idx, applicant_idx,
     worst_rank = np.full(P, -1, np.int32)
     worst_slot = np.zeros(P, np.int32)
 
-    for pr in range(1, max_priority + 1):
-        for i in range(N):
-            if priority[i] != pr:
-                continue
-            appl = applicant_idx[i]
-            if admitted[appl] != -1:
-                continue
+    # --- указатели предпочтений и стек свободных -----------------------------
+    ptr = np.empty(A, np.int32)
+    for a in range(A):
+        ptr[a] = app_off[a]
+    free = np.empty(A, np.int32)
+    in_free = np.zeros(A, np.uint8)
+    top = 0
+    for a in range(A):
+        if app_count[a] > 0 and active[a]:
+            free[top] = a
+            in_free[a] = 1
+            top += 1
 
-            prog = program_idx[i]
-            raw = np.int16(total_score[i])
-            rank = raw * RANK_SCALE + np.int32(jitter[i] * RANK_SCALE)
+    while top > 0:
+        top -= 1
+        s = free[top]
+        in_free[s] = 0
+        if ptr[s] >= app_off[s + 1]:
+            continue  # список предпочтений исчерпан
 
-            if seats_left[prog] > 0:
-                s = seat_cnt[prog]
-                tab_app[prog, s] = appl
-                tab_score[prog, s] = raw
-                tab_rank[prog, s] = rank
+        i = app_rows[ptr[s]]
+        ptr[s] += 1
+        p = program_idx[i]
+        r = rank[i]
+        raw = np.int16(total_score[i])
 
-                seat_cnt[prog] += 1
-                seats_left[prog] -= 1
-                admitted[appl] = prog
+        if seat_cnt[p] < seats_init[p]:
+            # есть свободное место — зачисляем
+            slot = seat_cnt[p]
+            tab_app[p, slot] = s
+            tab_score[p, slot] = raw
+            tab_rank[p, slot] = r
+            seat_cnt[p] += 1
+            admitted[s] = p
+            if worst_rank[p] == -1 or r < worst_rank[p]:
+                worst_rank[p] = r
+                worst_score[p] = raw
+                worst_slot[p] = slot
+        elif seats_init[p] > 0 and r > worst_rank[p]:
+            # мест нет, но абитуриент сильнее худшего — выбиваем худшего
+            kick = worst_slot[p]
+            old = tab_app[p, kick]
+            admitted[old] = -1
+            tab_app[p, kick] = s
+            tab_score[p, kick] = raw
+            tab_rank[p, kick] = r
+            admitted[s] = p
 
-                if worst_rank[prog] == -1 or rank < worst_rank[prog]:
-                    worst_rank[prog] = rank
-                    worst_score[prog] = raw
-                    worst_slot[prog] = s
-                continue
+            wr, ws, wslt = r, raw, kick
+            for t in range(seat_cnt[p]):
+                if tab_rank[p, t] < wr:
+                    wr, ws, wslt = tab_rank[p, t], tab_score[p, t], t
+            worst_rank[p] = wr
+            worst_score[p] = ws
+            worst_slot[p] = wslt
 
-            if rank > worst_rank[prog]:
-                kick = worst_slot[prog]
-                old_appl = tab_app[prog, kick]
-                admitted[old_appl] = -1
-
-                tab_app[prog, kick] = appl
-                tab_score[prog, kick] = raw
-                tab_rank[prog, kick] = rank
-                admitted[appl] = prog
-
-                wr, ws, wslt = rank, raw, kick
-                for t in range(seat_cnt[prog]):
-                    r = tab_rank[prog, t]
-                    if r < wr:
-                        wr, ws, wslt = r, tab_score[prog, t], t
-                worst_rank[prog] = wr
-                worst_score[prog] = ws
-                worst_slot[prog] = wslt
+            # выбитый снова ищет место на следующем приоритете
+            if ptr[old] < app_off[old + 1] and in_free[old] == 0:
+                free[top] = old
+                in_free[old] = 1
+                top += 1
+        else:
+            # отказ — пробуем следующий приоритет
+            if ptr[s] < app_off[s + 1] and in_free[s] == 0:
+                free[top] = s
+                in_free[s] = 1
+                top += 1
 
     for p in range(P):
         if seat_cnt[p] > 0:
@@ -121,10 +184,13 @@ def _simulate_admission_numba(priority, program_idx, applicant_idx,
 
 class AdmissionMonteCarlo:
     """
-    MC-модель шансов зачисления (без opt-out), с поддержкой «заморозки» нулей по истёкшим экзаменам.
+    MC-модель шансов зачисления, с поддержкой «заморозки» нулей по истёкшим экзаменам
+    и оттока (opt-out) части абитуриентов без согласия в другие вузы.
       • Импутация ВИ: по personal μ → CDF конкретного экзамена → глобальная CDF.
       • Freeze: если для (applicant×exam_id) нет ни одной известной оценки и exam_id помечен как истёкший,
         нули остаются нулями (импутации нет).
+      • Opt-out (если включён в settings): из пула без согласия часть «уходит» в каждой
+        симуляции, освобождая места; уходы влияют на p_admit и уводятся в p_excluded.
     """
 
     def __init__(self,
@@ -283,6 +349,69 @@ class AdmissionMonteCarlo:
             n_expired_ids, frozen_groups, frozen_rows_total
         )
 
+        # --- Отток в другие вузы (opt-out) ----------------------------------
+        # Модель (см. config.py): из пула E (абитуриенты без согласия НИГДЕ)
+        # в каждой симуляции часть «уходит» с вероятностью ∝ перцентиль
+        # способности^alpha; ожидаемая доля ушедших ≈ opt_out_ratio. Уход
+        # освобождает места и поднимает шансы оставшихся; собственный уход
+        # абитуриента уводится в p_excluded.
+        self.opt_out_enabled = bool(settings.opt_out_enabled)
+        self.opt_out_ratio = float(settings.opt_out_ratio)
+        self.opt_out_alpha = float(settings.opt_out_alpha)
+        self.opt_out_mode = str(settings.opt_out_mode)
+
+        # consent на абитуриента: True, если согласие есть хотя бы по одной заявке
+        consent_rows = applications["consent"].to_numpy(copy=False).astype(bool)
+        self.has_consent = np.zeros(self.n_applicants, dtype=bool)
+        np.logical_or.at(self.has_consent, self.applicant_idx, consent_rows)
+        # пул выбывающих E: абитуриенты без согласия нигде
+        self._optout_pool = np.where(~self.has_consent)[0].astype(np.int32)
+
+        # базовая способность (режим fixed и fallback): personal_mu, нули → медиана
+        base_ability = self.personal_mu.astype(np.float64).copy()
+        known_ab = base_ability[base_ability > 0]
+        med_ability = float(np.median(known_ab)) if known_ab.size else 0.0
+        base_ability[base_ability <= 0] = med_ability
+        self._base_ability = base_ability
+
+        if self.opt_out_enabled and self.opt_out_mode == "fixed" and self._optout_pool.size:
+            self._fixed_leave_prob = self._compute_leave_probs(self._base_ability[self._optout_pool])
+        else:
+            self._fixed_leave_prob = None
+
+        # счётчик присутствия абитуриента (для p_excluded и условного p_fail)
+        self.present_count = np.zeros(self.n_applicants, np.float64)
+
+        logger.info(
+            "   opt-out: %s; пул без согласия=%d/%d; ratio=%.2f, alpha=%.2f, mode=%s.",
+            "ON" if self.opt_out_enabled else "OFF",
+            int(self._optout_pool.size), self.n_applicants,
+            self.opt_out_ratio, self.opt_out_alpha, self.opt_out_mode,
+        )
+
+    # --------------------------------------------------------------------- #
+    def _compute_leave_probs(self, ability_pool: np.ndarray) -> np.ndarray:
+        """
+        Вероятности «уйти» для пула E по способности.
+          • перцентиль (0,1] внутри пула → вес p^alpha;
+          • масштабируем так, чтобы средняя вероятность ≈ opt_out_ratio
+            (ожидаемая доля ушедших), затем клипуем в [0,1].
+        Это эффективная (per-applicant Bernoulli) трактовка «исключить долю ratio»:
+        ожидаемая доля совпадает, без дорогой выборки фикс. размера на каждую симуляцию.
+        """
+        n = ability_pool.size
+        if n == 0:
+            return np.zeros(0, np.float64)
+        # перцентиль через двойной argsort (ранг 1..n)
+        ranks = np.empty(n, np.int64)
+        ranks[np.argsort(ability_pool, kind="stable")] = np.arange(1, n + 1)
+        pct = ranks / n
+        w = pct ** self.opt_out_alpha
+        mean_w = float(w.mean())
+        if mean_w <= 0.0:
+            return np.zeros(n, np.float64)
+        return np.clip((self.opt_out_ratio / mean_w) * w, 0.0, 1.0)
+
     # --------------------------------------------------------------------- #
     def _single_simulation(self) -> None:
         vi = self.vi_score.copy()
@@ -312,9 +441,23 @@ class AdmissionMonteCarlo:
         total = (vi + self.id_ach).astype(np.int16)
         jitter = self.rng.random(self._rows).astype(np.float32)
 
+        # Маска присутствия: «ушедшие» из пула E не участвуют в этом прогоне.
+        active = np.ones(self.n_applicants, np.uint8)
+        if self.opt_out_enabled and self._optout_pool.size:
+            pool = self._optout_pool
+            if self.opt_out_mode == "fixed":
+                leave_prob = self._fixed_leave_prob
+            else:  # per_simulation: способность по текущим импутированным баллам
+                ability = np.zeros(self.n_applicants, np.float64)
+                np.maximum.at(ability, self.applicant_idx, total.astype(np.float64))
+                leave_prob = self._compute_leave_probs(ability[pool])
+            leaves = self.rng.random(pool.size) < leave_prob
+            active[pool[leaves]] = 0
+        self.present_count += active
+
         admitted, passing = _simulate_admission_numba(
             self.priority, self.program_idx, self.applicant_idx,
-            total, self.seats_per_program, jitter,
+            total, self.seats_per_program, jitter, active,
             max_priority=int(self.priority.max()),
         )
 
@@ -357,22 +500,27 @@ class AdmissionMonteCarlo:
             if (scores := np.asarray(self.pass_scores_collect[p_idx])).size
         }
 
-        # Диагностика в «докапаутной» трактовке:
-        #   p_excluded = 0 (никого не исключали),
-        #   p_fail_when_included = доля «не поступил» среди всех прогонов.
-        admitted_totals = self.admit_counter.sum(axis=1)  # по applicant: число прогонов с зачислением
-        self.diag = {
-            aid: {
-                "p_excluded": 0.0,
-                "p_fail_when_included": float(1.0 - (admitted_totals[self._applicant2idx[aid]] / self.n_sim)),
-            }
-            for aid in self._applicant2idx
-        }
+        # Диагностика с учётом оттока:
+        #   p_excluded            = доля прогонов, где сам абитуриент «ушёл»;
+        #   p_fail_when_included  = доля «не поступил» среди прогонов, где он присутствовал.
+        # При выключенном opt-out present_count == n_sim → поведение как раньше
+        # (p_excluded = 0, p_fail = доля по всем прогонам).
+        admitted_totals = self.admit_counter.sum(axis=1)  # present-and-admitted по applicant
+        self.diag = {}
+        for aid, a_idx in self._applicant2idx.items():
+            present = float(self.present_count[a_idx])
+            if present > 0.0:
+                p_excluded = max(0.0, 1.0 - present / self.n_sim)
+                p_fail = min(1.0, max(0.0, 1.0 - admitted_totals[a_idx] / present))
+            else:
+                p_excluded, p_fail = 1.0, 0.0
+            self.diag[aid] = {"p_excluded": p_excluded, "p_fail_when_included": p_fail}
 
         logger.info(
-            "Monte-Carlo завершён: %d абитуриентов; %d направлений с квантилями. (без opt-out, freeze=%s)",
+            "Monte-Carlo завершён: %d абитуриентов; %d направлений с квантилями. (opt-out=%s, freeze=%s)",
             len(self.p_admit),
             len(self.pass_score_quantiles),
+            "ON" if self.opt_out_enabled else "OFF",
             "ON" if self.freeze_expired_exams else "OFF",
         )
 

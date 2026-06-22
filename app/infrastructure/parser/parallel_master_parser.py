@@ -10,7 +10,8 @@ from typing import Dict, Iterable, List, Tuple
 
 from app.config.logger import logger
 from app.domain.models import SubmissionStats, Application
-from app.infrastructure.parser.master_applications_parser import MasterApplicationsParser
+from app.infrastructure.parser.base import SPBPU
+from app.infrastructure.parser.factory import create_parser
 
 
 # --- utils ------------------------------------------------------------------
@@ -45,7 +46,9 @@ def _chunkify(seq: List[str], n_chunks: int) -> List[List[str]]:
 
 # --- worker -----------------------------------------------------------------
 
-def _worker_parse_chunk(codes: List[str], headless: bool = True) -> Dict[str, Tuple[dict, List[dict]]]:
+def _worker_parse_chunk(
+    codes: List[str], headless: bool = True, university: str = SPBPU
+) -> Dict[str, Tuple[dict, List[dict]]]:
     """
     Процесс-воркер: один ChromeDriver на чанк.
     Возвращает сериализованные dict'и, чтобы не споткнуться о pickle.
@@ -53,7 +56,7 @@ def _worker_parse_chunk(codes: List[str], headless: bool = True) -> Dict[str, Tu
     # необязательно, но помогает диагностировать
     os.environ.setdefault("WDM_LOG", "0")
 
-    parser = MasterApplicationsParser(headless=headless)
+    parser = create_parser(university=university, headless=headless)
     out: Dict[str, Tuple[dict, List[dict]]] = {}
 
     try:
@@ -80,6 +83,7 @@ def parse_programs_in_parallel(
     program_codes: Iterable[str],
     parallelism: int = 4,
     headless: bool = True,
+    university: str = SPBPU,
 ) -> Dict[str, Tuple[SubmissionStats, List[Application]]]:
     """
     Запускает N независимых ChromeDriver в отдельных процессах.
@@ -99,7 +103,7 @@ def parse_programs_in_parallel(
     n = max(1, int(parallelism))
     if n == 1 or len(codes) == 1:
         # однопоточный бэкап — без накладных расходов на процессы
-        parser = MasterApplicationsParser(headless=headless)
+        parser = create_parser(university=university, headless=headless)
         try:
             result: Dict[str, Tuple[SubmissionStats, List[Application]]] = {}
             for code in codes:
@@ -117,7 +121,7 @@ def parse_programs_in_parallel(
 
     # ВАЖНО: на Windows обязательна защита if __name__ == '__main__' в вызывающем коде!
     with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
-        futures = [pool.submit(_worker_parse_chunk, chunk, headless) for chunk in chunks]
+        futures = [pool.submit(_worker_parse_chunk, chunk, headless, university) for chunk in chunks]
         for fut in as_completed(futures):
             data = fut.result()  # dict[code] -> (stats_dict|None, apps_dicts)
             for code, (s_dict, a_dicts) in data.items():

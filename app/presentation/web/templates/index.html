@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <h1>Посмотри свои шансы на магистратуру</h1>
+  <p class="muted">Введи <b>код абитуриента</b> — покажем направления, шанс зачисления и ориентиры проходных баллов.</p>
+
+  <form class="lookup" action="/" method="get"
+        hx-get="/result" hx-target="#result" hx-swap="innerHTML" hx-indicator="#spin">
+    <input type="text" name="code" value="{{ code }}"
+           placeholder="например, 1000004" autocomplete="off" autofocus>
+    <button type="submit">Показать шансы</button>
+    <span id="spin" class="htmx-indicator">…</span>
+  </form>
+
+  <p class="muted small">Последнее обновление данных: <b>{{ last_update }}</b></p>
+</section>
+
+<div id="result">
+  {% include "result.html" %}
+</div>
+{% endblock %}

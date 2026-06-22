@@ -8,7 +8,7 @@ DOCKER_IMAGE = $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$(IMAGE_NAME)
 # Docker build flags
 DOCKER_BUILD_FLAGS ?= --no-cache
 
-.PHONY: build push all clean help
+.PHONY: build push all clean help run run-web run-bot seed web-docker compose-up compose-down version bump-version
 
 help: ## Display this help message
 	@echo "Usage: make [target]"
@@ -39,6 +39,24 @@ clean: ## Remove local Docker images
 # Development commands
 run: build ## Build and run the container locally
 	docker run -p 8080:8080 $(DOCKER_IMAGE):$(VERSION)
+
+run-web: ## Run the web frontend locally (uvicorn)
+	python web.py
+
+run-bot: ## Run the Telegram bot locally
+	python bot.py
+
+seed: ## Seed the DB with synthetic data for local testing
+	python seed_synthetic.py --reset
+
+web-docker: build ## Run the web frontend in a container (port 8080)
+	docker run -p 8080:8080 --env-file .env -v $(PWD)/data:/app/data $(DOCKER_IMAGE):$(VERSION) web.py
+
+compose-up: ## Build and start bot + web via docker compose
+	docker compose up --build
+
+compose-down: ## Stop docker compose services
+	docker compose down
 
 # Version management
 version: ## Show current version

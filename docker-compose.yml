@@ -1,0 +1,34 @@
+# Бот и веб-интерфейс на одном образе, общая БД через том ./data.
+# Запуск:  docker compose up --build        (поднимет оба сервиса)
+#          docker compose up web             (только сайт)
+#          docker compose up bot             (только бот)
+services:
+  bot:
+    build: .
+    image: masterchance:local
+    command: ["bot.py"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      TIMEZONE: Europe/Moscow
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  web:
+    build: .
+    image: masterchance:local
+    command: ["web.py"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      TIMEZONE: Europe/Moscow
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

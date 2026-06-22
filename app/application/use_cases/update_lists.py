@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config.logger import logger
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
-from app.infrastructure.parser.master_applications_parser import MasterApplicationsParser
+from app.infrastructure.parser.base import SPBPU, IApplicationsParser
 from app.infrastructure.parser.parallel_master_parser import parse_programs_in_parallel
 
 
@@ -23,22 +23,17 @@ class UpdateApplicationListsUseCase:
     Если нужно «жёстко» всё-или-ничего — не ловите исключения per-program.
     """
 
-    def __init__(self, repo: ProgramRepository, parser: Optional[MasterApplicationsParser] = None):
+    def __init__(self, repo: ProgramRepository, parser: Optional[IApplicationsParser] = None):
         self._repo = repo
         self._parser = parser  # опционально (для последовательного режима)
 
     # сохранён оригинальный последовательный режим
-    def execute(self) -> None:
+    def execute(self, university: str = SPBPU) -> None:
         if self._parser is None:
             raise RuntimeError("Для последовательного режима требуется parser")
-        logger.info("=== Синхронизация списков заявок начинается (последовательно) ===")
+        logger.info("=== Синхронизация списков заявок начинается (последовательно, вуз=%s) ===", university)
         try:
-            programs = [
-                p
-                for inst in self._repo.get_all_institutes()
-                for dept in self._repo.get_departments_by_institute(inst.code)
-                for p in self._repo.get_programs_by_department(dept.code)
-            ]
+            programs = self._repo.get_programs_by_university(university)
 
             for prog in programs:
                 logger.info("→ Обработка направления %s …", prog.code)
@@ -50,7 +45,7 @@ class UpdateApplicationListsUseCase:
 
                 self._repo.delete_applications_by_program(prog.code)
                 applicant_ids = [a.applicant_id for a in applications]
-                self._repo.add_applicants_bulk(applicant_ids)
+                self._repo.add_applicants_bulk(applicant_ids, university=university)
                 self._repo.add_applications_bulk(applications)
                 self._repo.add_submission_stats(stats)
 
@@ -62,15 +57,13 @@ class UpdateApplicationListsUseCase:
             raise
 
     # новый параллельный режим
-    def execute_parallel(self, parallelism: int = 8, headless: bool = True) -> None:
-        logger.info("=== Синхронизация списков заявок начинается (параллельно, N=%d) ===", parallelism)
+    def execute_parallel(self, parallelism: int = 8, headless: bool = True, university: str = SPBPU) -> None:
+        logger.info(
+            "=== Синхронизация списков заявок начинается (параллельно, N=%d, вуз=%s) ===",
+            parallelism, university,
+        )
         try:
-            programs = [
-                p
-                for inst in self._repo.get_all_institutes()
-                for dept in self._repo.get_departments_by_institute(inst.code)
-                for p in self._repo.get_programs_by_department(dept.code)
-            ]
+            programs = self._repo.get_programs_by_university(university)
             codes = [p.code for p in programs]
             if not codes:
                 logger.info("Нет направлений для обработки — выходим")
@@ -81,6 +74,7 @@ class UpdateApplicationListsUseCase:
                 program_codes=codes,
                 parallelism=parallelism,
                 headless=headless,
+                university=university,
             )
 
             # сохраняем в исходном порядке (на случай зависимостей логики)
@@ -99,7 +93,7 @@ class UpdateApplicationListsUseCase:
 
                 # 2) добавляем (bulk)
                 applicant_ids = [a.applicant_id for a in applications]
-                self._repo.add_applicants_bulk(applicant_ids)
+                self._repo.add_applicants_bulk(applicant_ids, university=university)
                 self._repo.add_applications_bulk(applications)
 
                 # 3) статистика

@@ -32,14 +32,27 @@ class Settings(BaseSettings):
 
     parser_parallelism: int = Field(8, alias="PARSER_PARALLELISM")
 
+    # ───────────────── Источник данных: вуз ───────────────────────────
+    # Какой вуз обновляем/обслуживаем по умолчанию: 'spbpu' (Политех) или
+    # 'spbgu' (СПбГУ). Скрипты обновления могут переопределять через CLI.
+    university: Literal["spbpu", "spbgu"] = Field("spbpu", alias="UNIVERSITY")
+    # Базовый URL рейтинговых списков магистратуры СПбГУ (Фаза 0 уточняет путь).
+    spbgu_base_url: str = Field(
+        "https://cabinet.spbu.ru/Lists/AG_Rating/", alias="SPBGU_BASE_URL"
+    )
+
     # БД
     db_url: str | None = Field(None, alias="DATABASE_URL")
     db_filename: str = Field("master.db", alias="DB_FILENAME")
     db_echo: bool = Field(False, alias="DB_ECHO")
 
+    # Веб-интерфейс ("посмотри свои шансы")
+    web_host: str = Field("0.0.0.0", alias="WEB_HOST")
+    web_port: int = Field(8080, alias="WEB_PORT")
+
     # ───────────────── Monte-Carlo: «отток» сильных ───────────────────
     # Включение механики оттока (True — включено, False — legacy-поведение).
-    opt_out_enabled: bool = Field(False, alias="MC_OPTOUT_ENABLED")
+    opt_out_enabled: bool = Field(True, alias="MC_OPTOUT_ENABLED")
     # Доля выбывающих среди тех, у кого НИГДЕ нет согласия (consent=False по всем его заявлениям).
     # Значение 0.2 означает «ровно 20% из пула E будем исключать в каждой симуляции».
     opt_out_ratio: float = Field(0.20, alias="MC_OPTOUT_RATIO")
