@@ -85,6 +85,19 @@ python web.py                   # → http://localhost:8080  (make run-web)
 Хост/порт настраиваются через `WEB_HOST` / `WEB_PORT` (по умолчанию `0.0.0.0:8080`).
 Маршруты: `/` — форма и результат, `/how` — как работает прогноз, `/healthz` — проверка живости.
 
+#### В Docker
+
+Образ один на бот и веб; что запускать — задаёт команда (`CMD` по умолчанию — бот):
+
+```bash
+make web-docker          # только сайт в контейнере → http://localhost:8080
+make compose-up          # бот + веб вместе (docker compose, общая БД через том ./data)
+make compose-down        # остановить
+```
+
+`docker-compose.yml` поднимает два сервиса (`bot`, `web`) на одном образе и общей
+БД (`./data`); переменные берутся из `.env`.
+
 ---
 
 ## Обновление данных
@@ -218,10 +231,13 @@ migrations/       # миграции Alembic
 
 ```bash
 make build        # собрать Docker-образ
-make run          # собрать и запустить
+make run          # собрать и запустить (бот)
 make run-web      # запустить веб-интерфейс локально (uvicorn)
 make run-bot      # запустить Telegram-бот локально
 make seed         # залить синтетические данные для теста
+make web-docker   # запустить веб в контейнере (порт 8080)
+make compose-up   # бот + веб через docker compose
+make compose-down # остановить docker compose
 make push         # отправить образ в реестр
 make bump-version # обновить версию (VERSION=x.y.z)
 ```

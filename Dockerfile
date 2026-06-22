@@ -38,5 +38,13 @@ ENV ENV=dev \
     TIMEZONE=Europe/Moscow \
     DB_FILENAME=master.db \
     DB_ECHO=false \
+    WEB_HOST=0.0.0.0 \
+    WEB_PORT=8080
 
-ENTRYPOINT ["python", "bot.py"]
+EXPOSE 8080
+
+# ENTRYPOINT — интерпретатор; что запускать, задаёт CMD (по умолчанию бот).
+# Веб поднимается переопределением команды: `docker run <img> web.py`
+# или через docker-compose (сервис web).
+ENTRYPOINT ["python"]
+CMD ["bot.py"]
