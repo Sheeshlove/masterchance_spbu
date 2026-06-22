@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     db_filename: str = Field("master.db", alias="DB_FILENAME")
     db_echo: bool = Field(False, alias="DB_ECHO")
 
+    # Веб-интерфейс ("посмотри свои шансы")
+    web_host: str = Field("0.0.0.0", alias="WEB_HOST")
+    web_port: int = Field(8080, alias="WEB_PORT")
+
     # ───────────────── Monte-Carlo: «отток» сильных ───────────────────
     # Включение механики оттока (True — включено, False — legacy-поведение).
     opt_out_enabled: bool = Field(True, alias="MC_OPTOUT_ENABLED")

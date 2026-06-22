@@ -40,6 +40,15 @@ clean: ## Remove local Docker images
 run: build ## Build and run the container locally
 	docker run -p 8080:8080 $(DOCKER_IMAGE):$(VERSION)
 
+run-web: ## Run the web frontend locally (uvicorn)
+	python web.py
+
+run-bot: ## Run the Telegram bot locally
+	python bot.py
+
+seed: ## Seed the DB with synthetic data for local testing
+	python seed_synthetic.py --reset
+
 # Version management
 version: ## Show current version
 	@echo $(VERSION)

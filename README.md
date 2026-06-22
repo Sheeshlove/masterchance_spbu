@@ -69,6 +69,22 @@ python bot.py
 
 Парсер использует Selenium — нужен установленный Chromium или Chrome.
 
+### Веб-интерфейс «посмотри свои шансы»
+
+Кроме бота есть сайт с тем же сценарием: вводишь **код абитуриента** — видишь
+направления, шанс зачисления, проходные баллы и статус экзаменов. Это read-only
+витрина поверх той же БД; вся логика расчётов — в общем
+`GetApplicantForecastUseCase`, который используют и бот, и сайт (числа не расходятся).
+
+```bash
+pip install -r requirements.txt
+python seed_synthetic.py        # синтетические данные для локального теста (опц.)
+python web.py                   # → http://localhost:8080  (make run-web)
+```
+
+Хост/порт настраиваются через `WEB_HOST` / `WEB_PORT` (по умолчанию `0.0.0.0:8080`).
+Маршруты: `/` — форма и результат, `/how` — как работает прогноз, `/healthz` — проверка живости.
+
 ---
 
 ## Обновление данных
@@ -189,7 +205,8 @@ app/
   domain/         # модели данных (dataclasses)
   application/    # сценарии использования
   infrastructure/ # парсеры и работа с БД
-  presentation/   # Telegram-бот (aiogram)
+  presentation/   # Telegram-бот (aiogram) и веб-интерфейс (FastAPI)
+    web/          # FastAPI-приложение: app.py, templates/, static/
 migrations/       # миграции Alembic
 ```
 
@@ -202,6 +219,9 @@ migrations/       # миграции Alembic
 ```bash
 make build        # собрать Docker-образ
 make run          # собрать и запустить
+make run-web      # запустить веб-интерфейс локально (uvicorn)
+make run-bot      # запустить Telegram-бот локально
+make seed         # залить синтетические данные для теста
 make push         # отправить образ в реестр
 make bump-version # обновить версию (VERSION=x.y.z)
 ```
