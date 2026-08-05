@@ -1,0 +1,7 @@
+# Зависимости для запуска тестов.
+# Тесты офлайновые; помимо pytest нужны зависимости тестируемых слоёв:
+#   requirements-desktop.txt — SQLAlchemy/pydantic (use case, репозиторий, клиент)
+#   aiogram                  — рендеринг Telegram-бота (иначе эти тесты пропускаются)
+-r requirements-desktop.txt
+pytest~=9.1
+aiogram~=3.21

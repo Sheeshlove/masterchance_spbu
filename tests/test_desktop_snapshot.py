@@ -10,15 +10,12 @@ import gzip
 import http.server
 import socketserver
 import sqlite3
-import sys
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from app.presentation.desktop.snapshot import (  # noqa: E402
+from app.presentation.desktop.snapshot import (
     SnapshotManager,
     SnapshotMeta,
     SnapshotUnavailable,
@@ -98,9 +95,3 @@ def test_should_refresh():
     assert should_refresh(SnapshotMeta(downloaded_at=(now - timedelta(hours=9)).isoformat()), now) is True
     assert should_refresh(SnapshotMeta(downloaded_at="не дата"), now) is True
 
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-    print("OK")

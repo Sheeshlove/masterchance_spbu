@@ -2,17 +2,13 @@
 Тест разбора block.html СПбГУ (ответ POST /api/reports/priem-list-02/data)
 в SubmissionStats + [Application], и парсинга даты формирования из #datetime.
 
-Офлайн, на фикстуре tests/fixtures/spbgu_speciality_block.html. Сети/pydantic
-не требует (только stdlib + app.domain dataclasses).
-Запуск: `python tests/test_spbgu_list.py` или `pytest`.
+Офлайн, на фикстуре tests/fixtures/spbgu_speciality_block.html. Сети не требует
+(только stdlib + app.domain dataclasses).
 """
-import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # корень репо в sys.path
-
-from app.infrastructure.parser.spbgu.spbgu_master_parser import (  # noqa: E402
+from app.infrastructure.parser.spbgu.spbgu_master_parser import (
     block_to_records,
     parse_report_datetime,
 )
@@ -63,10 +59,3 @@ def test_parse_report_datetime():
     assert parse_report_datetime(html) == datetime(2026, 8, 5, 16, 0)
     assert parse_report_datetime("<div>no datetime here</div>") is None
 
-
-if __name__ == "__main__":
-    test_num_places_and_count()
-    test_row_mapping()
-    test_all_ids_and_consent_shape()
-    test_parse_report_datetime()
-    print("OK")

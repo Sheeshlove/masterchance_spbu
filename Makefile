@@ -58,11 +58,8 @@ snapshot: ## Build the DB snapshot for the desktop client (dist/master-snapshot.
 exe: ## Build MasterChance.exe (Windows only; CI does this on windows-latest)
 	pyinstaller packaging/masterchance.spec
 
-test: ## Run the offline test suite
-	python tests/test_spbgu_discovery.py
-	python tests/test_spbgu_list.py
-	python tests/test_desktop_live.py
-	python tests/test_desktop_snapshot.py
+test: ## Run the offline test suite (pytest)
+	python -m pytest
 
 web-docker: build ## Run the web frontend in a container (port 8080)
 	docker run -p 8080:8080 --env-file .env -v $(PWD)/data:/app/data $(DOCKER_IMAGE):$(VERSION) web.py

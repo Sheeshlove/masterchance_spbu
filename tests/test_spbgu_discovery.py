@@ -2,15 +2,11 @@
 Тест discovery программ магистратуры СПбГУ из отчёта PriemList02.
 
 Работает офлайн на фикстуре tests/fixtures/spbgu_report_meta.html (усечённый
-reportMeta реального отчёта). Сети/pydantic/selenium не требует.
-Запуск: `pytest tests/test_spbgu_discovery.py` или `python tests/test_spbgu_discovery.py`.
+reportMeta реального отчёта). Сети/selenium не требует.
 """
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # корень репо в sys.path
-
-from app.infrastructure.parser.spbgu.spbgu_programs import (  # noqa: E402
+from app.infrastructure.parser.spbgu.spbgu_programs import (
     extract_report_meta,
     parse_report_meta,
 )
@@ -42,8 +38,3 @@ def test_parse_report_meta_maps_programs():
         assert p["list_ref"] and p["code"].endswith(p["list_ref"])
         assert isinstance(p["is_international"], bool)
 
-
-if __name__ == "__main__":
-    test_extract_report_meta_has_ids()
-    test_parse_report_meta_maps_programs()
-    print("OK")
