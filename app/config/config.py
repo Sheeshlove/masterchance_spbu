@@ -36,9 +36,11 @@ class Settings(BaseSettings):
     # Какой вуз обновляем/обслуживаем по умолчанию: 'spbpu' (Политех) или
     # 'spbgu' (СПбГУ). Скрипты обновления могут переопределять через CLI.
     university: Literal["spbpu", "spbgu"] = Field("spbpu", alias="UNIVERSITY")
-    # Базовый URL рейтинговых списков магистратуры СПбГУ (Фаза 0 уточняет путь).
+    # Отчёт «Списки подавших заявление» магистратуры СПбГУ (server-rendered,
+    # содержит встроенный reportMeta JSON со справочником программ). Данные
+    # абитуриентов подтягиваются POST-запросом к /api/reports/priem-list-02/data.
     spbgu_base_url: str = Field(
-        "https://cabinet.spbu.ru/Lists/AG_Rating/", alias="SPBGU_BASE_URL"
+        "https://enrollelists.spbu.ru/reports/PriemList02.php", alias="SPBGU_BASE_URL"
     )
 
     # БД
@@ -49,6 +51,13 @@ class Settings(BaseSettings):
     # Веб-интерфейс ("посмотри свои шансы")
     web_host: str = Field("0.0.0.0", alias="WEB_HOST")
     web_port: int = Field(8080, alias="WEB_PORT")
+
+    # Десктоп-клиент: откуда качать снапшот БД с посчитанным Monte-Carlo
+    # (собирается build_snapshot.py и публикуется, напр., в GitHub Releases).
+    snapshot_url: str = Field(
+        "https://github.com/Sheeshlove/masterchance_spbu/releases/latest/download/master-snapshot.db.gz",
+        alias="SNAPSHOT_URL",
+    )
 
     # ───────────────── Monte-Carlo: «отток» сильных ───────────────────
     # Включение механики оттока (True — включено, False — legacy-поведение).

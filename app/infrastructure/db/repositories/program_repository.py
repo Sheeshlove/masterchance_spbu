@@ -1,8 +1,7 @@
 # repositories/program_repository.py
 from datetime import datetime
-from typing import Dict, Iterable, List, Sequence
+from typing import TYPE_CHECKING, Dict, Iterable, List, Sequence
 
-import pandas as pd
 from sqlalchemy import delete
 from sqlalchemy import func
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -19,6 +18,9 @@ from app.infrastructure.db.models import (
     SubmissionStatsModel, ApplicantModel, ApplicationModel, ProgramQuantileModel, AdmissionProbabilityModel,
     AdmissionDiagnosticsModel, ExamSessionModel
 )
+
+if TYPE_CHECKING:  # pandas нужен только для Monte-Carlo (get_program_meta_df),
+    import pandas as pd  # поэтому импортируется лениво — бот/сайт/десктоп его не тянут
 
 
 class ProgramRepository:
@@ -454,6 +456,8 @@ class ProgramRepository:
         Используется Monte‑Carlo для построения exam_id.
         Если задан university — только программы этого вуза.
         """
+        import pandas as pd  # локальный импорт: тяжёлая зависимость только для MC
+
         q = self._session.query(
             ProgramModel.code,
             ProgramModel.department_code,
