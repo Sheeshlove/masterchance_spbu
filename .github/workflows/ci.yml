@@ -1,0 +1,38 @@
+name: CI
+
+# Быстрая проверка на каждый пуш. Сборка приложений — отдельно, в
+# build-desktop.yml (вручную или по тегу).
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Offline tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest
+
+  imports:
+    name: Server dependencies
+    runs-on: ubuntu-latest
+    # Тесты идут на лёгком наборе зависимостей, поэтому забытый пакет из
+    # requirements.txt они не заметят — он всплывёт уже на сервере (так
+    # случилось со scipy). Здесь ставим ровно то, что ставит сервер, и
+    # проверяем, что все его точки входа импортируются.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/check_imports.py
