@@ -245,3 +245,5 @@ cython_debug/
 **/celerybeat*
 /data/monte_results/
 **/*.db-journal
+# Спека сборки десктоп-клиента — часть репозитория (правило *.spec выше её скрывает)
+!packaging/masterchance.spec

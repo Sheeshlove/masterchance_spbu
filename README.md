@@ -100,6 +100,73 @@ make compose-down        # остановить
 
 ---
 
+## Десктоп-клиент (.exe)
+
+Пользователь открывает `MasterChance.exe`, вводит свой уникальный код поступающего
+и видит шансы — без браузера и без установки Python.
+
+### Как это устроено (и почему именно так)
+
+Монте-Карло **нельзя посчитать для одного человека**: модель разыгрывает конкурс
+всей когорты (см. `RecalculateMonteCarloUseCase` — он читает `get_all_applications()` /
+`get_all_applicants()`). Поэтому клиент не парсит все списки на машине пользователя
+— это заняло бы минуты, раздуло `.exe` до сотен мегабайт и обрушило бы сотни
+запросов на сервер вуза с каждого компьютера.
+
+Вместо этого:
+
+| Что | Откуда | Свежесть |
+| --- | --- | --- |
+| Шансы, проходные баллы | **снапшот** БД с посчитанным MC (скачивается и кэшируется) | по расписанию пересчёта на сервере |
+| Ваши баллы, приоритеты, согласия | **живой парсинг** по фильтру `applicant_code` — один запрос | в момент нажатия кнопки |
+
+Расчёты не дублируются: клиент, бот и сайт используют один и тот же
+`GetApplicantForecastUseCase`, поэтому числа нигде не расходятся.
+
+Если сети нет — клиент честно работает на сохранённом снапшоте и пишет об этом
+в статусной строке.
+
+### Запуск из исходников
+
+```bash
+pip install -r requirements-desktop.txt
+python desktop.py          # или make run-desktop
+```
+
+Откуда качать снапшот, задаёт `SNAPSHOT_URL` (по умолчанию — GitHub Releases).
+Кэш лежит в `%LOCALAPPDATA%\MasterChance` (Windows) или `~/.local/share/masterchance`.
+
+### Публикация снапшота (серверная сторона)
+
+После `update_lists.py` и `run_monte_carlo.py`:
+
+```bash
+make snapshot              # → dist/master-snapshot.db.gz
+```
+
+Полученный файл выкладывается туда, куда смотрит `SNAPSHOT_URL` (например,
+в GitHub Releases с именем `master-snapshot.db.gz`). Клиент забирает его
+условным GET, так что неизменившийся снапшот повторно не качается.
+
+### Сборка .exe
+
+`.exe` собирается **на Windows**. Проще всего — через CI:
+workflow `.github/workflows/build-desktop.yml` (запуск вручную или по тегу `v*`)
+прогоняет офлайн-тесты, собирает `MasterChance.exe` на `windows-latest` и
+прикладывает его к релизу.
+
+Локально на Windows:
+
+```bash
+pip install -r requirements-desktop.txt pyinstaller
+pyinstaller packaging/masterchance.spec     # → dist/MasterChance.exe
+```
+
+В сборку намеренно не входят `numpy/pandas/numba/selenium` — считает сервер,
+клиенту нужен только SQLite и HTTP.
+
+---
+
 ## Обновление данных
 
 Скрипты запускаются вручную или по расписанию:
@@ -218,9 +285,12 @@ app/
   domain/         # модели данных (dataclasses)
   application/    # сценарии использования
   infrastructure/ # парсеры и работа с БД
-  presentation/   # Telegram-бот (aiogram) и веб-интерфейс (FastAPI)
+  presentation/   # Telegram-бот (aiogram), веб-интерфейс (FastAPI), десктоп (tkinter)
     web/          # FastAPI-приложение: app.py, templates/, static/
+    desktop/      # десктоп-клиент: ui.py, snapshot.py, live.py
 migrations/       # миграции Alembic
+packaging/        # спека PyInstaller для сборки .exe
+tests/            # офлайн-тесты на фикстурах
 ```
 
 ---
@@ -234,7 +304,11 @@ make build        # собрать Docker-образ
 make run          # собрать и запустить (бот)
 make run-web      # запустить веб-интерфейс локально (uvicorn)
 make run-bot      # запустить Telegram-бот локально
+make run-desktop  # запустить десктоп-клиент из исходников
 make seed         # залить синтетические данные для теста
+make snapshot     # собрать снапшот БД для десктоп-клиента
+make exe          # собрать MasterChance.exe (только Windows)
+make test         # прогнать офлайн-тесты
 make web-docker   # запустить веб в контейнере (порт 8080)
 make compose-up   # бот + веб через docker compose
 make compose-down # остановить docker compose

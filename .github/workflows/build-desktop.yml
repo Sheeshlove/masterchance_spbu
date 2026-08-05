@@ -1,0 +1,54 @@
+name: Build desktop client
+
+# Собирает Windows-.exe десктоп-клиента. Запускается вручную или по тегу v*.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  tests:
+    name: Offline tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install desktop deps
+        run: pip install -r requirements-desktop.txt
+      - name: Run offline tests
+        run: |
+          python tests/test_spbgu_discovery.py
+          python tests/test_spbgu_list.py
+          python tests/test_desktop_live.py
+          python tests/test_desktop_snapshot.py
+
+  build-exe:
+    name: Build MasterChance.exe
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -r requirements-desktop.txt pyinstaller
+      - name: Build
+        run: pyinstaller packaging/masterchance.spec
+      - name: Smoke check
+        run: |
+          if (-not (Test-Path dist/MasterChance.exe)) { throw "exe не собран" }
+          "{0:N1} MB" -f ((Get-Item dist/MasterChance.exe).Length / 1MB)
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MasterChance-windows
+          path: dist/MasterChance.exe
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MasterChance.exe

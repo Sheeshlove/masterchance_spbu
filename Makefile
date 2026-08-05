@@ -8,7 +8,7 @@ DOCKER_IMAGE = $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$(IMAGE_NAME)
 # Docker build flags
 DOCKER_BUILD_FLAGS ?= --no-cache
 
-.PHONY: build push all clean help run run-web run-bot seed web-docker compose-up compose-down version bump-version
+.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot exe test web-docker compose-up compose-down version bump-version
 
 help: ## Display this help message
 	@echo "Usage: make [target]"
@@ -48,6 +48,21 @@ run-bot: ## Run the Telegram bot locally
 
 seed: ## Seed the DB with synthetic data for local testing
 	python seed_synthetic.py --reset
+
+run-desktop: ## Run the desktop client from source
+	python desktop.py
+
+snapshot: ## Build the DB snapshot for the desktop client (dist/master-snapshot.db.gz)
+	python build_snapshot.py
+
+exe: ## Build MasterChance.exe (Windows only; CI does this on windows-latest)
+	pyinstaller packaging/masterchance.spec
+
+test: ## Run the offline test suite
+	python tests/test_spbgu_discovery.py
+	python tests/test_spbgu_list.py
+	python tests/test_desktop_live.py
+	python tests/test_desktop_snapshot.py
 
 web-docker: build ## Run the web frontend in a container (port 8080)
 	docker run -p 8080:8080 --env-file .env -v $(PWD)/data:/app/data $(DOCKER_IMAGE):$(VERSION) web.py

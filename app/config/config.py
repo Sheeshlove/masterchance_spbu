@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     web_host: str = Field("0.0.0.0", alias="WEB_HOST")
     web_port: int = Field(8080, alias="WEB_PORT")
 
+    # Десктоп-клиент: откуда качать снапшот БД с посчитанным Monte-Carlo
+    # (собирается build_snapshot.py и публикуется, напр., в GitHub Releases).
+    snapshot_url: str = Field(
+        "https://github.com/Sheeshlove/masterchance_spbu/releases/latest/download/master-snapshot.db.gz",
+        alias="SNAPSHOT_URL",
+    )
+
     # ───────────────── Monte-Carlo: «отток» сильных ───────────────────
     # Включение механики оттока (True — включено, False — legacy-поведение).
     opt_out_enabled: bool = Field(True, alias="MC_OPTOUT_ENABLED")

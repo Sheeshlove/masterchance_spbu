@@ -69,12 +69,18 @@ class DiscoveredProgram(TypedDict):
     list_ref: str
 
 
-def build_report_url(base_url: str | None = None) -> str:
-    """URL отчёта со всеми бюджетными программами магистратуры."""
+def build_report_url(base_url: str | None = None, **overrides: str) -> str:
+    """
+    URL отчёта со всеми бюджетными программами магистратуры.
+
+    `overrides` переопределяют поля фильтра, напр.
+    `build_report_url(applicant_code="1645144")` — отчёт по одному абитуриенту.
+    """
     if base_url is None:
         from app.config.config import settings  # ленивый импорт: не тянем pydantic в чистый парс
         base_url = settings.spbgu_base_url
-    return f"{base_url}?{urllib.parse.urlencode(_DEFAULT_QUERY)}"
+    query = {**_DEFAULT_QUERY, **{k: str(v) for k, v in overrides.items()}}
+    return f"{base_url}?{urllib.parse.urlencode(query)}"
 
 
 def fetch_report_html(url: str | None = None, timeout: int = 60) -> str:
