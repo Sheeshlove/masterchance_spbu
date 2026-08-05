@@ -8,7 +8,7 @@ DOCKER_IMAGE = $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$(IMAGE_NAME)
 # Docker build flags
 DOCKER_BUILD_FLAGS ?= --no-cache
 
-.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot exe test web-docker compose-up compose-down version bump-version
+.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot publish-snapshot server-update exe test web-docker compose-up compose-down version bump-version
 
 help: ## Display this help message
 	@echo "Usage: make [target]"
@@ -54,6 +54,12 @@ run-desktop: ## Run the desktop client from source
 
 snapshot: ## Build the DB snapshot for the desktop client (dist/master-snapshot.db.gz)
 	python build_snapshot.py
+
+publish-snapshot: ## Upload the snapshot to the GitHub release (needs GITHUB_TOKEN)
+	scripts/publish_snapshot.sh
+
+server-update: ## Full server cycle: fetch lists, recalculate, snapshot, publish
+	scripts/server_update.sh
 
 exe: ## Build MasterChance.exe (Windows only; CI does this on windows-latest)
 	pyinstaller packaging/masterchance.spec

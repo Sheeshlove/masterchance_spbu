@@ -53,9 +53,13 @@ class Settings(BaseSettings):
     web_port: int = Field(8080, alias="WEB_PORT")
 
     # Десктоп-клиент: откуда качать снапшот БД с посчитанным Monte-Carlo
-    # (собирается build_snapshot.py и публикуется, напр., в GitHub Releases).
+    # (собирается build_snapshot.py и публикуется скриптом scripts/publish_snapshot.sh).
+    #
+    # Ссылка намеренно указывает на ФИКСИРОВАННЫЙ тег `data`, а не на
+    # /releases/latest/: «latest» переезжает на любой новый релиз, поэтому
+    # публикация версии с .exe сломала бы адрес снапшота у всех клиентов.
     snapshot_url: str = Field(
-        "https://github.com/Sheeshlove/masterchance_spbu/releases/latest/download/master-snapshot.db.gz",
+        "https://github.com/Sheeshlove/masterchance_spbu/releases/download/data/master-snapshot.db.gz",
         alias="SNAPSHOT_URL",
     )
 
