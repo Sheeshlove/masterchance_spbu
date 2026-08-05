@@ -141,7 +141,7 @@ def build_catalog(rng: random.Random):
                         department_code=dep["code"],
                         is_ino=False,
                         is_international=rng.random() < 0.15,
-                        university="spbpu",
+                        university="spbgu",
                     )
                 )
     return institutes, departments, programs
@@ -236,7 +236,7 @@ def main() -> None:
         sample_codes: list[str] = []
         for n in range(args.applicants):
             applicant_id = str(1_000_001 + n)  # коды вида '1000001'
-            session.add(ApplicantModel(id=applicant_id, university="spbpu"))
+            session.add(ApplicantModel(id=applicant_id, university="spbgu"))
 
             # абитуриент подаёт на 1..5 программ с приоритетами 1..k
             k = rng.randint(1, 5)

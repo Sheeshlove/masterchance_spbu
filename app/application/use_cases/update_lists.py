@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config.logger import logger
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
-from app.infrastructure.parser.base import SPBPU, IApplicationsParser
+from app.infrastructure.parser.base import SPBGU, IApplicationsParser
 from app.infrastructure.parser.parallel_master_parser import parse_programs_in_parallel
 
 
@@ -28,7 +28,7 @@ class UpdateApplicationListsUseCase:
         self._parser = parser  # опционально (для последовательного режима)
 
     # сохранён оригинальный последовательный режим
-    def execute(self, university: str = SPBPU) -> None:
+    def execute(self, university: str = SPBGU) -> None:
         if self._parser is None:
             raise RuntimeError("Для последовательного режима требуется parser")
         logger.info("=== Синхронизация списков заявок начинается (последовательно, вуз=%s) ===", university)
@@ -57,7 +57,7 @@ class UpdateApplicationListsUseCase:
             raise
 
     # новый параллельный режим
-    def execute_parallel(self, parallelism: int = 8, headless: bool = True, university: str = SPBPU) -> None:
+    def execute_parallel(self, parallelism: int = 4, headless: bool = True, university: str = SPBGU) -> None:
         logger.info(
             "=== Синхронизация списков заявок начинается (параллельно, N=%d, вуз=%s) ===",
             parallelism, university,

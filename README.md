@@ -4,7 +4,7 @@
 [![Aiogram](https://img.shields.io/badge/Aiogram-3.x-orange.svg)](https://docs.aiogram.dev/)
 [![Docker](https://img.shields.io/badge/Docker-supported-blue.svg)](https://www.docker.com/)
 
-Telegram-бот для абитуриентов магистратуры СПбПУ. Он парсит конкурсные списки с сайта университета, считает симуляции методом Монте-Карло и выдаёт примерную вероятность зачисления — с учётом приоритетов и возможных отказов других людей в очереди.
+Сервис для абитуриентов магистратуры **СПбГУ**: бот, сайт и десктоп-приложение. Он парсит конкурсные списки с сайта приёмной комиссии, считает симуляции методом Монте-Карло и выдаёт примерную вероятность зачисления — с учётом приоритетов и возможных отказов других людей в очереди.
 
 Честно говоря, идея не нова: многие руками смотрят на своё место в списке и прикидывают шансы. Бот просто делает это быстрее и более системно.
 
@@ -16,9 +16,8 @@ Telegram-бот для абитуриентов магистратуры СПб�
 
 ## Что умеет бот
 
-- Собирает данные о заявлениях через Selenium — без ручного обновления.
+- Собирает данные о заявлениях обычными HTTP-запросами — без ручного обновления.
 - Запускает симуляции Монте-Карло поверх актуальных данных и показывает вероятность поступления.
-- Следит за расписанием вступительных испытаний.
 - Строит отчёты по проходным баллам и числу поданных заявлений на направление.
 
 ---
@@ -29,7 +28,7 @@ Telegram-бот для абитуриентов магистратуры СПб�
 | ------------- | ------------------------------- |
 | Бот           | `aiogram 3.x`                   |
 | БД и миграции | `SQLAlchemy`, `Alembic`, SQLite |
-| Парсинг       | `Selenium`, `webdriver-manager` |
+| Парсинг       | `urllib`, `html.parser` (stdlib)  |
 | Расчёты       | `numpy`, `numba`, `pandas`      |
 | Графики       | `matplotlib`                    |
 | Сборка        | Docker                          |
@@ -42,7 +41,7 @@ Telegram-бот для абитуриентов магистратуры СПб�
 
 - Python 3.11+
 - Токен Telegram-бота от [@BotFather](https://t.me/BotFather)
-- Docker (если запускаете в контейнере) или Chromium (если локально)
+- Docker (если запускаете в контейнере)
 
 ### Через Docker
 
@@ -71,7 +70,7 @@ pip install -r requirements.txt
 python bot.py
 ```
 
-Парсер использует Selenium — нужен установленный Chromium или Chrome.
+Браузер не нужен: отчёт СПбГУ читается обычными HTTP-запросами.
 
 ### Веб-интерфейс «посмотри свои шансы»
 
@@ -180,7 +179,7 @@ pyinstaller packaging/masterchance.spec
 проверить разработчика». Как это обойти, расписано в
 [КАК_ЗАПУСТИТЬ.md](КАК_ЗАПУСТИТЬ.md).
 
-В сборку намеренно не входят `numpy/pandas/numba/selenium` — считает сервер,
+В сборку намеренно не входят `numpy/pandas/numba` — считает сервер,
 клиенту нужен только SQLite и HTTP.
 
 ---
@@ -190,7 +189,6 @@ pyinstaller packaging/masterchance.spec
 Скрипты запускаются вручную или по расписанию:
 
 - `update_lists.py` — обновляет списки абитуриентов.
-- `update_exam_schedule.py` — обновляет расписание испытаний.
 - `run_monte_carlo.py` — пересчитывает вероятности.
 
 ---
@@ -201,7 +199,7 @@ pyinstaller packaging/masterchance.spec
 
 ### 1. Окружение
 
-Требуется Python 3.11+, Chromium/Chrome (для Selenium) и токен бота от [@BotFather](https://t.me/BotFather).
+Требуется Python 3.11+ и токен бота от [@BotFather](https://t.me/BotFather).
 
 ```bash
 git clone <repo_url> && cd masterchance_spbu
@@ -216,11 +214,11 @@ BOT_TOKEN=<токен_от_BotFather>
 ENV=dev
 TIMEZONE=Europe/Moscow
 DATABASE_URL=sqlite:///data/master.db
-PARSER_PARALLELISM=8                 # число параллельных ChromeDriver
+PARSER_PARALLELISM=4                 # сколько списков тянуть параллельно
 
-# Выбор вуза-источника
-UNIVERSITY=spbpu                     # spbpu (Политех) | spbgu (СПбГУ)
-SPBGU_BASE_URL=https://cabinet.spbu.ru/Lists/AG_Rating/
+# Источник данных (поддерживается только СПбГУ)
+UNIVERSITY=spbgu
+SPBGU_BASE_URL=https://enrollelists.spbu.ru/reports/PriemList02.php
 ```
 
 Полный список параметров (отток, freeze экзаменов и т.д.) — в `app/config/config.py`.
@@ -230,7 +228,7 @@ SPBGU_BASE_URL=https://cabinet.spbu.ru/Lists/AG_Rating/
 - **Свежая БД** — таблицы создаются автоматически при первом запуске любого скрипта
   (`Base.metadata.create_all`), уже с колонкой `university`.
 - **Существующая БД** (была до мультивуза) — накатить миграцию; она добавит `university`
-  и проставит всем старым строкам `spbpu`:
+  и проставит её всем старым строкам:
 
   ```bash
   alembic upgrade head        # включает миграцию a1c2e3f4b5d6_add_university
@@ -241,27 +239,21 @@ SPBGU_BASE_URL=https://cabinet.spbu.ru/Lists/AG_Rating/
 `update_lists.py` берёт список программ **из БД** (`get_programs_by_university`), поэтому
 программы/кафедры/институты должны быть засеяны заранее.
 
-- **СПбПУ** — программы заводятся через `repo.add_institute/add_department/add_program`
-  (источник кодов — `scripts/parse_programs.py`, селектор `#code` на my.spbstu.ru).
-- **СПбГУ** — сидинг на базе `spbgu_programs.discover_programs()` запишет программы с
-  `university='spbgu'` (каркас; ждёт разведки формата cabinet.spbu.ru).
+Каталог наполняется скриптом `seed_spbgu_programs.py`: он читает `reportMeta`
+отчёта PriemList02 и записывает институты/направления/программы.
 
 ### 5. Обновление данных (по вузам)
 
 ```bash
-# СПбПУ (UNIVERSITY из .env по умолчанию):
-python update_lists.py
-python update_lists.py --university=spbpu     # то же явно
+python seed_spbgu_programs.py    # один раз: каталог программ
+python update_lists.py           # списки + пересчёт Monte-Carlo
 
-# СПбГУ (после реализации парсера):
-python update_lists.py --university=spbgu
-
-# только пересчёт MC / расписание ВИ:
+# только пересчёт MC (например, после обновления нескольких источников):
+python update_lists.py --no-monte-carlo
 python run_monte_carlo.py
-python update_exam_schedule.py
 ```
 
-`update_lists.py` парсит списки в N процессов (один ChromeDriver на процесс), перезаписывает
+`update_lists.py` парсит списки в N процессов, перезаписывает
 заявки выбранного вуза, обновляет статистику и **сразу пересчитывает Монте-Карло**.
 
 ### 6. Запуск бота
@@ -275,30 +267,31 @@ python bot.py     # или make run (Docker)
 ### 7. Регулярная эксплуатация (cron)
 
 ```cron
-0  */3 * * *  cd /app && python update_lists.py --university=spbpu
-30 */3 * * *  cd /app && python update_lists.py --university=spbgu   # после реализации парсера
-0  4   * * *  cd /app && python update_exam_schedule.py
+0  */6 * * *  cd /app && scripts/server_update.sh
 ```
 
 Бот держится отдельным долгоживущим процессом; скрипты обновления дописывают БД, бот читает
 свежие результаты.
 
-### Статус мультивуза
+### Источник данных
 
-- ✅ **Готово:** колонка `university` + миграция, фильтрация по вузу, выбор источника
-  (`UNIVERSITY` / `--university=`), фабрика парсеров.
-- ✅ **СПбГУ:** discovery программ из `reportMeta` отчёта PriemList02, разбор списков
-  (`POST /api/reports/priem-list-02/data`), сидинг каталога
-  (`seed_spbgu_programs.py`). Selenium не нужен — обычный HTTP.
-  Порядок: `python seed_spbgu_programs.py` → `python update_lists.py --university=spbgu`.
-- ⚠️ **Открытый вопрос — коды абитуриентов.** `applicants.id` не содержит вуза, а коды
-  у вузов независимые. Если два вуза лить в одну базу, совпавший код склеит двух разных
-  людей: MC посчитает их одним абитуриентом, а бот покажет перемешанные направления.
-  Пока безопасно вести **один вуз на базу**; развязка требует неймспейсинга id и
-  соответствующего поиска в боте/сайте/клиенте.
-- ℹ️ Коды кафедр/институтов у СПбГУ неймспейснуты (`spbgu:01.04.02`) — иначе общий
-  `department_code` служил бы одним `exam_id` для разных экзаменов двух вузов.
-  Пользователю префикс не показывается (`_display_code`).
+Единственный источник — отчёт **«Списки подавших заявление»** СПбГУ
+(`enrollelists.spbu.ru/reports/PriemList02.php`). Браузер не нужен:
+
+- **Каталог программ** — из встроенного в страницу JSON `reportMeta`
+  (`discover_programs`), записывается `seed_spbgu_programs.py`.
+- **Списки абитуриентов** — `POST /api/reports/priem-list-02/data`, ответ приходит
+  готовым HTML-фрагментом на специальность (`block_to_records`).
+
+Коды кафедр/институтов неймспейснуты (`spbgu:01.04.02`): коды направлений
+федеральные, а таблица `departments` не разделена по источникам, и без префикса
+разные источники делили бы один `department_code` — он же `exam_id` в
+Монте-Карло. Пользователю префикс не показывается (`_display_code`).
+
+Колонка `university` в БД сохранена (везде `'spbgu'`) — на случай, если позже
+появится второй источник. Тогда придётся решить вопрос **кодов абитуриентов**:
+`applicants.id` не содержит вуза, поэтому совпавший код склеил бы двух разных
+людей.
 
 ---
 
@@ -380,4 +373,4 @@ alembic upgrade head
 
 ## Лицензия
 
-Данные со страниц университета принадлежат СПбПУ. Бот использует их только для расчётов и не хранит в открытом доступе.
+Данные со страниц приёмной комиссии принадлежат СПбГУ. Сервис использует их только для расчётов и не хранит в открытом доступе.

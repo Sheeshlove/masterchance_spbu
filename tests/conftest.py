@@ -49,7 +49,7 @@ class Seeder:
         code: str,
         name: str = "Программа",
         department_code: str = "01.04.02",
-        university: str = "spbpu",
+        university: str = "spbgu",
         is_international: bool = False,
     ) -> None:
         inst_code = department_code.split(".")[0]
@@ -76,7 +76,7 @@ class Seeder:
             )
         )
 
-    def applicant(self, applicant_id: str, university: str = "spbpu") -> None:
+    def applicant(self, applicant_id: str, university: str = "spbgu") -> None:
         self.session.add(ApplicantModel(id=applicant_id, university=university))
 
     def application(

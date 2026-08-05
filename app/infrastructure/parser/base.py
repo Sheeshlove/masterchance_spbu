@@ -6,24 +6,21 @@ from typing import List, Tuple
 
 from app.domain.models import Application, SubmissionStats
 
-# Ключи вузов (используются в конфиге, БД-колонке `university` и фабрике парсеров).
-SPBPU = "spbpu"  # СПбПУ (Политех) — исходный источник
-SPBGU = "spbgu"  # СПбГУ — добавляемый второй источник
+# Ключ вуза: используется в конфиге, в колонке `university` и в фабрике парсеров.
+SPBGU = "spbgu"  # СПбГУ — единственный поддерживаемый источник
 
-SUPPORTED_UNIVERSITIES = (SPBPU, SPBGU)
+SUPPORTED_UNIVERSITIES = (SPBGU,)
 
 
 class IApplicationsParser(ABC):
     """
-    Единый контракт парсера списков поступающих (магистратура).
+    Контракт парсера списков поступающих (магистратура).
 
-    Реализации:
-      • MasterApplicationsParser           — СПбПУ (my.spbstu.ru)
-      • SpbguMasterApplicationsParser       — СПбГУ (cabinet.spbu.ru)
+    Реализация: SpbguMasterApplicationsParser (enrollelists.spbu.ru).
 
-    Парсер инкапсулирует свой WebDriver/HTTP-клиент и обязан корректно
-    освобождать ресурсы в close(). Один экземпляр — один драйвер
-    (см. parse_programs_in_parallel: один драйвер на процесс).
+    Парсер инкапсулирует свой HTTP-клиент и обязан освобождать ресурсы в
+    close(). Один экземпляр — один клиент (см. parse_programs_in_parallel:
+    по парсеру на процесс).
     """
 
     @abstractmethod
@@ -32,12 +29,12 @@ class IApplicationsParser(ABC):
         Скачать и распарсить один рейтинговый список.
 
         Возвращает (SubmissionStats, [Application, ...]).
-        program_code — наш внутренний код программы (для СПбГУ может быть
-        неймспейснут, см. фабрику discover_programs).
+        program_code — наш внутренний код программы (`spbgu:<uuid специальности>`,
+        см. spbgu_programs.discover_programs).
         """
         raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
-        """Освободить ресурсы (закрыть WebDriver)."""
+        """Освободить ресурсы."""
         raise NotImplementedError

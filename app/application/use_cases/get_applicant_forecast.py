@@ -63,7 +63,7 @@ class ForecastItem:
 @dataclass
 class ForecastResult:
     applicant_id: str
-    university: str | None        # 'spbpu' | 'spbgu' | None
+    university: str | None        # 'spbgu' | None
     items: list[ForecastItem]
     fail_cond: float              # условная вероятность «пролёта», 0..1
     last_update: datetime | None  # tz-aware, settings.timezone

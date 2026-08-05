@@ -44,7 +44,7 @@ def _item(**kw) -> ForecastItem:
 def _result(**kw) -> ForecastResult:
     base = dict(
         applicant_id="A1",
-        university="spbpu",
+        university="spbgu",
         items=[_item()],
         fail_cond=0.56,
         last_update=datetime(2026, 6, 22, 6, 0, tzinfo=timezone.utc),

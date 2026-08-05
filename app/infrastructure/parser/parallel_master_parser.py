@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Tuple
 
 from app.config.logger import logger
 from app.domain.models import SubmissionStats, Application
-from app.infrastructure.parser.base import SPBPU
+from app.infrastructure.parser.base import SPBGU
 from app.infrastructure.parser.factory import create_parser
 
 
@@ -47,7 +47,7 @@ def _chunkify(seq: List[str], n_chunks: int) -> List[List[str]]:
 # --- worker -----------------------------------------------------------------
 
 def _worker_parse_chunk(
-    codes: List[str], headless: bool = True, university: str = SPBPU
+    codes: List[str], headless: bool = True, university: str = SPBGU
 ) -> Dict[str, Tuple[dict, List[dict]]]:
     """
     Процесс-воркер: один ChromeDriver на чанк.
@@ -83,7 +83,7 @@ def parse_programs_in_parallel(
     program_codes: Iterable[str],
     parallelism: int = 4,
     headless: bool = True,
-    university: str = SPBPU,
+    university: str = SPBGU,
 ) -> Dict[str, Tuple[SubmissionStats, List[Application]]]:
     """
     Запускает N независимых ChromeDriver в отдельных процессах.

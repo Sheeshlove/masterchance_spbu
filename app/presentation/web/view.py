@@ -13,7 +13,7 @@ from app.application.use_cases.get_applicant_forecast import (
     ForecastResult,
 )
 
-UNIVERSITY_LABELS = {"spbpu": "СПбПУ (Политех)", "spbgu": "СПбГУ"}
+UNIVERSITY_LABELS = {"spbgu": "СПбГУ"}
 
 
 def exam_view(exam: ExamStatus) -> dict:

@@ -32,7 +32,7 @@ def _item(**kw) -> ForecastItem:
 def _result(**kw) -> ForecastResult:
     base = dict(
         applicant_id="A1",
-        university="spbpu",
+        university="spbgu",
         items=[_item()],
         fail_cond=0.56,
         last_update=datetime(2026, 6, 22, 6, 0, tzinfo=timezone.utc),
@@ -75,7 +75,6 @@ def test_qrange_formats():
 
 
 def test_university_label_is_human_readable():
-    assert to_view(_result(university="spbpu"))["university"] == "СПбПУ (Политех)"
     assert to_view(_result(university="spbgu"))["university"] == "СПбГУ"
     # незнакомый ключ отдаём как есть, пустой — пустой строкой
     assert to_view(_result(university="mit"))["university"] == "mit"

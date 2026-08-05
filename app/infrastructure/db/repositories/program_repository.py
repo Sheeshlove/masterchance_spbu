@@ -260,7 +260,7 @@ class ProgramRepository:
         return [self._to_program_domain(m) for m in models]
 
     def get_programs_by_university(self, university: str) -> list[Program]:
-        """Все программы заданного вуза ('spbpu' | 'spbgu')."""
+        """Все программы заданного вуза (сейчас поддерживается только 'spbgu')."""
         models = (
             self._session
             .query(ProgramModel)
@@ -397,7 +397,7 @@ class ProgramRepository:
             delete(ApplicationModel).where(ApplicationModel.program_code == program_code)
         )
 
-    def add_applicants_bulk(self, applicant_ids: Iterable[str], university: str = "spbpu") -> None:
+    def add_applicants_bulk(self, applicant_ids: Iterable[str], university: str = "spbgu") -> None:
         """
         Массовое добавление / UPSERT абитуриентов.
         Работает быстро и без повторов. university тегирует вуз-источник.

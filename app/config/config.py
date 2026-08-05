@@ -28,14 +28,15 @@ class Settings(BaseSettings):
 
     bot_token: str = Field("BOT_TOKEN", alias="BOT_TOKEN")
 
-    chrome_bin: str = Field("CHROME_BIN", alias="CHROME_BIN")
-
-    parser_parallelism: int = Field(8, alias="PARSER_PARALLELISM")
+    # Сколько списков тянуть параллельно. Это обычные HTTP-запросы к отчёту
+    # СПбГУ (браузер не нужен), поэтому упирается не в память, а в вежливость
+    # к серверу вуза.
+    parser_parallelism: int = Field(4, alias="PARSER_PARALLELISM")
 
     # ───────────────── Источник данных: вуз ───────────────────────────
-    # Какой вуз обновляем/обслуживаем по умолчанию: 'spbpu' (Политех) или
-    # 'spbgu' (СПбГУ). Скрипты обновления могут переопределять через CLI.
-    university: Literal["spbpu", "spbgu"] = Field("spbpu", alias="UNIVERSITY")
+    # Поддерживается один вуз — СПбГУ. Ключ сохранён в конфиге и в колонке
+    # `university`, чтобы при необходимости можно было добавить второй источник.
+    university: Literal["spbgu"] = Field("spbgu", alias="UNIVERSITY")
     # Отчёт «Списки подавших заявление» магистратуры СПбГУ (server-rendered,
     # содержит встроенный reportMeta JSON со справочником программ). Данные
     # абитуриентов подтягиваются POST-запросом к /api/reports/priem-list-02/data.

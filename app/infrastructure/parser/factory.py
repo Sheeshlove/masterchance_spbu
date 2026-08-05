@@ -3,27 +3,22 @@ from __future__ import annotations
 
 from app.infrastructure.parser.base import (
     SPBGU,
-    SPBPU,
     SUPPORTED_UNIVERSITIES,
     IApplicationsParser,
 )
 
 
-def create_parser(university: str = SPBPU, headless: bool = True) -> IApplicationsParser:
+def create_parser(university: str = SPBGU, headless: bool = True) -> IApplicationsParser:
     """
     Фабрика парсеров по ключу вуза.
 
-    Импорты ленивые: тяжёлые selenium-зависимые модули подтягиваются только
-    тогда, когда реально нужен соответствующий парсер. Это позволяет
-    импортировать фабрику и оркестрацию в окружениях без selenium.
-    """
-    key = (university or SPBPU).strip().lower()
+    Импорт ленивый: нужен для parse_programs_in_parallel, который создаёт
+    парсер уже внутри рабочего процесса.
 
-    if key == SPBPU:
-        from app.infrastructure.parser.master_applications_parser import (
-            MasterApplicationsParser,
-        )
-        return MasterApplicationsParser(headless=headless)
+    `headless` сохранён ради совместимости вызовов — парсер СПбГУ работает по
+    обычному HTTP, браузер ему не нужен.
+    """
+    key = (university or SPBGU).strip().lower()
 
     if key == SPBGU:
         from app.infrastructure.parser.spbgu.spbgu_master_parser import (
@@ -32,5 +27,5 @@ def create_parser(university: str = SPBPU, headless: bool = True) -> IApplicatio
         return SpbguMasterApplicationsParser(headless=headless)
 
     raise ValueError(
-        f"Неизвестный вуз '{university}'. Поддерживаются: {SUPPORTED_UNIVERSITIES}"
+        f"Неизвестный вуз '{university}'. Поддерживается: {SUPPORTED_UNIVERSITIES}"
     )

@@ -64,16 +64,16 @@ def test_parse_block_info_ignores_empty_values():
 # ── неймспейсинг кодов ────────────────────────────────────────────────────
 def test_department_and_institute_are_namespaced():
     """
-    Коды направлений федеральные и совпадают у вузов, а таблица departments
-    общая. Без префикса СПбПУ и СПбГУ делили бы один department_code — он же
-    exam_id в Monte-Carlo, и баллы за разные экзамены смешались бы.
+    Коды направлений федеральные, а таблица departments не разделена по
+    источникам. Префикс не даёт разным источникам делить один
+    department_code — он же exam_id в Monte-Carlo.
     """
     assert namespaced_department("01.04.02") == "spbgu:01.04.02"
     assert namespaced_institute("01.04.02") == "spbgu:01"
     assert namespaced_institute("45.04.01") == "spbgu:45"
 
 
-def test_namespaced_codes_do_not_collide_with_spbpu():
+def test_namespaced_codes_differ_from_plain_federal_codes():
     assert namespaced_department("01.04.02") != "01.04.02"
 
 
@@ -83,7 +83,7 @@ def test_namespaced_codes_do_not_collide_with_spbpu():
     [
         ("spbgu:01.04.02", "01.04.02"),
         ("spbgu:45", "45"),
-        ("01.04.02", "01.04.02"),   # коды СПбПУ не трогаем
+        ("01.04.02", "01.04.02"),   # код без префикса не трогаем
         ("09.04.01", "09.04.01"),
     ],
 )

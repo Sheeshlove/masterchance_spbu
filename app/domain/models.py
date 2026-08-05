@@ -38,7 +38,7 @@ class Program:
     department_code: str
     is_ino: bool = False
     is_international: bool = False
-    university: str = "spbpu"  # 'spbpu' (Политех) | 'spbgu' (СПбГУ)
+    university: str = "spbgu"  # источник данных; сейчас только СПбГУ
 
 
 @dataclass
@@ -58,7 +58,7 @@ class Applicant:
     Абитуриент.
     """
     id: str  # Уникальный код поступающего
-    university: str = "spbpu"  # 'spbpu' (Политех) | 'spbgu' (СПбГУ)
+    university: str = "spbgu"  # источник данных; сейчас только СПбГУ
 
 
 @dataclass

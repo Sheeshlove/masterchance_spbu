@@ -53,7 +53,7 @@ def test_writes_programs_departments_institutes(repo, session):
 def test_programs_are_tagged_with_university(repo):
     seed_catalog(_discovered(2), repo)
     repo.commit()
-    assert repo.get_programs_by_university("spbpu") == []
+    assert repo.get_programs_by_university("другой-вуз") == []
     assert len(repo.get_programs_by_university(SPBGU)) == 2
 
 
@@ -104,21 +104,21 @@ def test_seeding_twice_does_not_duplicate(repo):
     assert len(repo.get_programs_by_university(SPBGU)) == 3
 
 
-def test_does_not_collide_with_existing_spbpu_catalog(repo, seed):
+def test_does_not_clobber_a_foreign_catalogue(repo, seed):
     """
-    Ключевая проверка: у вузов совпадают федеральные коды направлений.
-    Каталог СПбГУ не должен перетереть кафедру Политеха с тем же кодом.
+    Коды направлений федеральные, поэтому чужая запись с тем же кодом
+    не должна быть перетёрта сидингом СПбГУ.
     """
-    seed.program("701", name="Матмод Политеха", department_code="01.04.02",
-                 university="spbpu")
+    seed.program("701", name="Чужая программа", department_code="01.04.02",
+                 university="другой-вуз")
     seed.commit()
 
     seed_catalog(_discovered(2), repo)
     repo.commit()
 
-    spbpu = repo.get_programs_by_university("spbpu")
-    assert len(spbpu) == 1
-    assert spbpu[0].department_code == "01.04.02"          # код Политеха не тронут
+    foreign = repo.get_programs_by_university("другой-вуз")
+    assert len(foreign) == 1
+    assert foreign[0].department_code == "01.04.02"       # чужой код не тронут
     spbgu = repo.get_programs_by_university(SPBGU)
     assert {p.department_code for p in spbgu} == {"spbgu:01.04.02"}
 
