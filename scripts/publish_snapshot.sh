@@ -26,7 +26,7 @@ API="https://api.github.com/repos/${REPO}"
 
 die() { echo "❌ $*" >&2; exit 1; }
 
-[ -n "${GITHUB_TOKEN:-}" ] || die "Не задан GITHUB_TOKEN. См. СЕРВЕР.md, шаг 7."
+[ -n "${GITHUB_TOKEN:-}" ] || die "Не задан GITHUB_TOKEN. См. СЕРВЕР.md, шаг 8."
 [ -f "$FILE" ] || die "Файл '$FILE' не найден. Сначала выполните build_snapshot.py."
 
 auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json")

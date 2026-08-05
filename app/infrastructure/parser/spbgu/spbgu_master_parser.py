@@ -132,6 +132,49 @@ def _to_int(s: Optional[str], default: int = 0) -> int:
     return int(m.group()) if m else default
 
 
+def parse_block_info(block_html: str) -> dict:
+    """
+    Разобрать «шапку» блока (инфо-таблицу) в словарь.
+
+    Нужна на этапе сидинга: в reportMeta лежит только название НАПРАВЛЕНИЯ
+    («Прикладная математика и информатика»), одинаковое у нескольких программ,
+    а настоящее имя образовательной программы есть только здесь.
+
+    Возвращает ключи (те, что нашлись):
+        education_form, speciality_code, speciality_name, program_name,
+        exams, num_places
+    """
+    p = _BlockParser()
+    p.feed(block_html)
+
+    out: dict = {}
+    for row in p.info_rows:
+        if len(row) < 2:
+            continue
+        label = row[0].rstrip(":").strip().lower()
+        value = row[1].strip()
+        if not value:
+            continue
+        if "форма обучения" in label:
+            out["education_form"] = value
+        elif "направление подготовки" in label:
+            # «45.04.01 Филология» → код + название
+            parts = value.split(None, 1)
+            if parts and re.match(r"^\d{2}\.\d{2}\.\d{2}$", parts[0]):
+                out["speciality_code"] = parts[0]
+                if len(parts) > 1:
+                    out["speciality_name"] = parts[1].strip()
+            else:
+                out["speciality_name"] = value
+        elif "образовательная программа" in label:
+            out["program_name"] = value
+        elif "вступительные испытания" in label:
+            out["exams"] = value
+        elif "количество" in label and "мест" in label:
+            out["num_places"] = _to_int(value)
+    return out
+
+
 def _num_places(info_rows: list[list[str]]) -> int:
     for row in info_rows:
         if row and "количество бюджетных мест" in row[0].lower():
@@ -263,6 +306,16 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
         return list(data.get("blocks") or [])
+
+    def fetch_program_info(self, speciality_id: str, timeout: int = 60) -> dict:
+        """
+        Шапка блока по одной специальности: настоящее имя образовательной
+        программы, форма обучения, КЦП. Используется сидингом каталога
+        (seed_spbgu_programs.py) — в reportMeta этих полей нет.
+        """
+        blocks = self._fetch_speciality_blocks(speciality_id, timeout=timeout)
+        html = "".join(b.get("html", "") for b in blocks if isinstance(b, dict))
+        return parse_block_info(html) if html else {}
 
     def parse(self, program_code: str) -> Tuple[SubmissionStats, List[Application]]:
         self._ensure_report()

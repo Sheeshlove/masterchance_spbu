@@ -15,10 +15,16 @@ from app.infrastructure.db.repositories.program_repository import ProgramReposit
 def main():
     # вуз-источник: из конфига (UNIVERSITY), с возможностью переопределить CLI-аргументом
     university = settings.university
+    # Monte-Carlo считается по ВСЕЙ базе сразу, поэтому при обновлении нескольких
+    # вузов подряд его гоняют один раз в конце: --no-monte-carlo пропускает
+    # пересчёт здесь, а run_monte_carlo.py вызывают отдельно.
+    run_mc = True
     for arg in sys.argv[1:]:
         if arg.startswith("--university="):
             university = arg.split("=", 1)[1].strip().lower()
-    logger.info("=== masterchance старт (вуз=%s) ===", university)
+        elif arg == "--no-monte-carlo":
+            run_mc = False
+    logger.info("=== masterchance старт (вуз=%s, monte-carlo=%s) ===", university, run_mc)
     # 1) Настройка БД
     engine = create_engine(
         settings.database_url,
@@ -47,6 +53,12 @@ def main():
         sys.exit(1)
 
     logger.info("=== masterchance завершён ===")
+
+    if not run_mc:
+        session.close()
+        logger.info("Monte‑Carlo пропущен (--no-monte-carlo). Сессия БД закрыта.")
+        print("ℹ️  Monte‑Carlo пропущен — запустите run_monte_carlo.py отдельно.")
+        return
 
     try:
         repo = ProgramRepository(session)

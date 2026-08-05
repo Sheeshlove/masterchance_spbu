@@ -74,6 +74,18 @@ def _to_local(dt_naive_msk: datetime) -> datetime:
     return dt_naive_msk.replace(tzinfo=_SRC_TZ).astimezone(settings.timezone)
 
 
+def _display_code(code: str) -> str:
+    """
+    Убрать служебный префикс вуза: 'spbgu:01.04.02' → '01.04.02'.
+
+    Коды направлений федеральные и совпадают у разных вузов, а таблица
+    departments общая, поэтому в БД коды СПбГУ неймспейснуты (см.
+    seed_spbgu_programs.py). Пользователю префикс показывать незачем, и
+    срезаем мы его здесь — чтобы бот, сайт и десктоп получили это разом.
+    """
+    return code.split(":", 1)[-1]
+
+
 def _build_exam_status(app: Application | None, sessions: list[ExamSession] | None) -> ExamStatus:
     """
     Повторяет логику бывшей `_exam_info_line` из бота, но возвращает структуру,
@@ -161,7 +173,7 @@ class GetApplicantForecastUseCase:
                 ForecastItem(
                     program_code=code,
                     program_name=prog.name if prog else code,
-                    department_code=prog.department_code if prog else code.split(".")[0],
+                    department_code=_display_code(prog.department_code) if prog else code.split(".")[0],
                     prob_cond=probs_cond.get(code),
                     q90=q.q90 if q else None,
                     q95=q.q95 if q else None,
