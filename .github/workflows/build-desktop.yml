@@ -1,6 +1,9 @@
 name: Build desktop client
 
-# Собирает Windows-.exe десктоп-клиента. Запускается вручную или по тегу v*.
+# Собирает десктоп-клиент под Windows и macOS.
+# PyInstaller не умеет собирать под чужую ОС, поэтому каждая система
+# собирается на своём раннере. У macOS ещё и две архитектуры: бинарь под
+# Apple Silicon не запустится на Intel-маке и наоборот.
 on:
   workflow_dispatch:
   push:
@@ -21,30 +24,70 @@ jobs:
       - name: Run offline tests
         run: python -m pytest
 
-  build-exe:
-    name: Build MasterChance.exe
+  build:
+    name: ${{ matrix.label }}
     needs: tests
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false        # падение сборки под одну ОС не отменяет остальные
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            artifact: MasterChance-windows
+          - os: macos-13       # Intel-маки
+            label: macOS (Intel)
+            artifact: MasterChance-macos-intel
+          - os: macos-14       # Apple Silicon (M1/M2/M3/M4)
+            label: macOS (Apple Silicon)
+            artifact: MasterChance-macos-apple-silicon
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install deps
         run: pip install -r requirements-desktop.txt pyinstaller
+
+      # Окно рисуется на tkinter. Если его нет в этой сборке Python, лучше
+      # упасть здесь с понятной ошибкой, чем отдать пользователю приложение,
+      # которое молча не открывается.
+      - name: Check tkinter is available
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
       - name: Build
         run: pyinstaller packaging/masterchance.spec
-      - name: Smoke check
-        run: |
-          if (-not (Test-Path dist/MasterChance.exe)) { throw "exe не собран" }
-          "{0:N1} MB" -f ((Get-Item dist/MasterChance.exe).Length / 1MB)
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
+        run: |
+          if (-not (Test-Path dist/MasterChance.exe)) { throw "MasterChance.exe не собран" }
+          "Размер: {0:N1} МБ" -f ((Get-Item dist/MasterChance.exe).Length / 1MB)
+
+      # .app — это каталог. upload-artifact не сохраняет флаг «исполняемый»,
+      # поэтому пакуем сами через ditto: так бандл доедет рабочим.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ ! -d dist/MasterChance.app ]; then echo "MasterChance.app не собран"; exit 1; fi
+          ditto -c -k --sequesterRsrc --keepParent dist/MasterChance.app dist/${{ matrix.artifact }}.zip
+          echo "Размер: $(du -h dist/${{ matrix.artifact }}.zip | cut -f1)"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: MasterChance-windows
-          path: dist/MasterChance.exe
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/MasterChance.exe
+            dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/MasterChance.exe
+          files: |
+            dist/MasterChance.exe
+            dist/${{ matrix.artifact }}.zip
+          fail_on_unmatched_files: false

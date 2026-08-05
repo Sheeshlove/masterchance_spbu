@@ -2,19 +2,29 @@
 """
 PyInstaller-спека десктоп-клиента MasterChance.
 
-Сборка (на Windows):
+Сборка:
     pip install -r requirements-desktop.txt pyinstaller
     pyinstaller packaging/masterchance.spec
 
-Результат: dist/MasterChance.exe (onefile, без консольного окна).
+Результат зависит от системы, НА КОТОРОЙ идёт сборка (PyInstaller не умеет
+собирать под чужую ОС):
+    Windows → dist/MasterChance.exe
+    macOS   → dist/MasterChance.app   (+ голый бинарь dist/MasterChance)
+    Linux   → dist/MasterChance
+
+На macOS обязательно нужен .app-бандл: если отдать пользователю голый
+исполняемый файл, двойной клик в Finder откроет Терминал вместо окна.
 
 Клиент НЕ считает Монте-Карло (он берёт готовый снапшот), поэтому numpy /
 pandas / numba / matplotlib и парсеры на Selenium в сборку не попадают —
-это и держит .exe небольшим. Импорт pandas в ProgramRepository ленивый
+это и держит размер небольшим. Импорт pandas в ProgramRepository ленивый
 (get_program_meta_df), так что исключение безопасно.
 """
+import sys
 
 block_cipher = None
+
+IS_MACOS = sys.platform == "darwin"
 
 EXCLUDES = [
     # тяжёлый счётный стек — только на сервере
@@ -66,7 +76,27 @@ exe = EXE(
     console=False,          # оконное приложение, без чёрного окна консоли
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
+    target_arch=None,       # собираем под архитектуру машины сборки
+    codesign_identity=None,  # подписи нет — см. предупреждение про Gatekeeper в КАК_ЗАПУСТИТЬ.md
     entitlements_file=None,
 )
+
+# На macOS заворачиваем бинарь в .app, чтобы приложение открывалось
+# двойным кликом как обычная программа, а не через Терминал.
+if IS_MACOS:
+    app = BUNDLE(
+        exe,
+        name="MasterChance.app",
+        icon=None,
+        bundle_identifier="ru.masterchance.desktop",
+        info_plist={
+            "CFBundleName": "MasterChance",
+            "CFBundleDisplayName": "MasterChance",
+            "CFBundleShortVersionString": "1.0.0",
+            "CFBundleVersion": "1.0.0",
+            "NSHighResolutionCapable": True,      # без этого окно мылит на Retina
+            "LSApplicationCategoryType": "public.app-category.education",
+            "LSMinimumSystemVersion": "11.0",
+            "NSHumanReadableCopyright": "MasterChance",
+        },
+    )

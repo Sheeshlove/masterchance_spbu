@@ -151,19 +151,33 @@ make snapshot              # → dist/master-snapshot.db.gz
 в GitHub Releases с именем `master-snapshot.db.gz`). Клиент забирает его
 условным GET, так что неизменившийся снапшот повторно не качается.
 
-### Сборка .exe
+### Сборка приложения
 
-`.exe` собирается **на Windows**. Проще всего — через CI:
-workflow `.github/workflows/build-desktop.yml` (запуск вручную или по тегу `v*`)
-прогоняет офлайн-тесты, собирает `MasterChance.exe` на `windows-latest` и
-прикладывает его к релизу.
+PyInstaller собирает только под ту систему, на которой запущен, поэтому сборка
+матричная — workflow `.github/workflows/build-desktop.yml` (вручную или по тегу
+`v*`) прогоняет офлайн-тесты и собирает три варианта:
 
-Локально на Windows:
+| Раннер | Артефакт | Для кого |
+| --- | --- | --- |
+| `windows-latest` | `MasterChance.exe` | Windows |
+| `macos-14` | `MasterChance-macos-apple-silicon.zip` | Mac на M1/M2/M3/M4 |
+| `macos-13` | `MasterChance-macos-intel.zip` | Mac на Intel |
+
+На macOS собирается полноценный `.app`-бандл (иначе двойной клик в Finder
+открыл бы Терминал), и пакуется через `ditto` — `upload-artifact` не сохраняет
+флаг «исполняемый».
+
+Локально:
 
 ```bash
 pip install -r requirements-desktop.txt pyinstaller
-pyinstaller packaging/masterchance.spec     # → dist/MasterChance.exe
+pyinstaller packaging/masterchance.spec
+# Windows → dist/MasterChance.exe   macOS → dist/MasterChance.app
 ```
+
+Приложение **не подписано**: Windows покажет SmartScreen, macOS — «не удаётся
+проверить разработчика». Как это обойти, расписано в
+[КАК_ЗАПУСТИТЬ.md](КАК_ЗАПУСТИТЬ.md).
 
 В сборку намеренно не входят `numpy/pandas/numba/selenium` — считает сервер,
 клиенту нужен только SQLite и HTTP.
