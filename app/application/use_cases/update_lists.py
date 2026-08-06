@@ -78,7 +78,7 @@ class UpdateApplicationListsUseCase:
             )
 
             # сохраняем в исходном порядке (на случай зависимостей логики)
-            ok, skipped = 0, 0
+            ok, skipped, empty = 0, 0, 0
             for prog in programs:
                 code = prog.code
                 if code not in results:
@@ -87,6 +87,18 @@ class UpdateApplicationListsUseCase:
                     continue
 
                 stats, applications = results[code]
+
+                # Пустой список — это почти всегда сбой источника, а не «все
+                # забрали документы». Раньше мы в этом случае удаляли старые
+                # заявки и не добавляли ничего: один такой прогон обнулял
+                # базу, по которой уже был посчитан Monte-Carlo. Лучше
+                # сохранить прошлые данные — они устарели, но они есть.
+                if not applications:
+                    logger.warning(
+                        "✕ Пропускаем %s: источник вернул пустой список, прежние заявки сохраняем", code
+                    )
+                    empty += 1
+                    continue
 
                 # 1) удаляем старые заявки
                 self._repo.delete_applications_by_program(code)
@@ -100,9 +112,24 @@ class UpdateApplicationListsUseCase:
                 self._repo.add_submission_stats(stats)
                 ok += 1
 
-            # один общийCommit
+            # Ни одной программы с данными — это не «обновление без изменений»,
+            # а сломанный источник. Откатываемся, чтобы следом не запустился
+            # пересчёт и публикация пустого снапшота.
+            if ok == 0:
+                self._repo._session.rollback()
+                raise RuntimeError(
+                    f"Ни по одной программе не получено заявок "
+                    f"(пусто: {empty}, без результата: {skipped}). "
+                    f"Данные в базе оставлены без изменений. "
+                    f"Проверьте источник: python scripts/diagnose_spbgu.py"
+                )
+
+            # один общий commit
             self._repo.commit()
-            logger.info("✅ Параллельная синхронизация завершена. Успешно: %d, пропущено: %d", ok, skipped)
+            logger.info(
+                "✅ Параллельная синхронизация завершена. Успешно: %d, пусто: %d, пропущено: %d",
+                ok, empty, skipped,
+            )
 
         except SQLAlchemyError as db_err:
             logger.exception("Ошибка транзакции, выполняем rollback: %s", db_err)
