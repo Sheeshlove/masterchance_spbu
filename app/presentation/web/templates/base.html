@@ -4,14 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}MasterChance — посмотри свои шансы{% endblock %}</title>
+  <meta name="theme-color" content="#FBFAF7">
+  <link rel="preload" as="font" type="font/woff2" crossorigin
+        href="{{ url_for('static', path='fonts/Inter-400-cyrillic.woff2') }}">
+  <link rel="preload" as="font" type="font/woff2" crossorigin
+        href="{{ url_for('static', path='fonts/PoiretOne-400-cyrillic.woff2') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='fonts.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">🎓 MasterChance</a>
+    <a class="brand" href="/">MasterChance</a>
     <nav>
-      <a href="/how">Как это работает?</a>
+      <a href="/how">Как это работает</a>
     </nav>
   </header>
 
