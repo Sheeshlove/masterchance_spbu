@@ -266,11 +266,19 @@ python bot.py     # или make run (Docker)
 
 ### 7. Регулярная эксплуатация (cron)
 
-```cron
-0  */6 * * *  cd /app && scripts/server_update.sh
+Одна команда: первый сбор сразу, дальше сам каждые 3 часа, переживает
+закрытие терминала и перезагрузку сервера.
+
+```bash
+docker run -d --name masterchance-updater --restart unless-stopped \
+    --env-file .env -v "$PWD/data:/app/data" -v "$PWD/dist:/app/dist" \
+    masterchance:local scripts/autoupdate.py     # make autoupdate
 ```
 
-Бот держится отдельным долгоживущим процессом; скрипты обновления дописывают БД, бот читает
+Логи — `docker logs -f masterchance-updater`, интервал — `UPDATE_INTERVAL_HOURS`
+(не чаще раза в 10 минут). Разовый проход без фона — `scripts/server_update.sh`.
+
+Бот держится отдельным долгоживущим процессом; обновление дописывает БД, бот читает
 свежие результаты.
 
 ### Источник данных

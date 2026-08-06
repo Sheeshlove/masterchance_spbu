@@ -4,6 +4,11 @@ FROM python:3.11-slim
 # читается обычными HTTP-запросами. Раньше здесь ставился Chromium со всей
 # обвязкой ради Selenium (~1,5 ГБ образа).
 
+# curl нужен scripts/publish_snapshot.sh — в slim-образе его нет.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY . /app
 

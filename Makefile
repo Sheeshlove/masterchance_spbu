@@ -8,7 +8,10 @@ DOCKER_IMAGE = $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$(IMAGE_NAME)
 # Docker build flags
 DOCKER_BUILD_FLAGS ?= --no-cache
 
-.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot publish-snapshot server-update exe test check-imports web-docker compose-up compose-down version bump-version
+# Локальный образ (его же собирает СЕРВЕР.md); реестр — отдельно, в DOCKER_IMAGE
+LOCAL_IMAGE ?= masterchance:local
+
+.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot publish-snapshot server-update autoupdate autoupdate-logs autoupdate-stop exe test check-imports web-docker compose-up compose-down version bump-version
 
 help: ## Display this help message
 	@echo "Usage: make [target]"
@@ -58,8 +61,23 @@ snapshot: ## Build the DB snapshot for the desktop client (dist/master-snapshot.
 publish-snapshot: ## Upload the snapshot to the GitHub release (needs GITHUB_TOKEN)
 	scripts/publish_snapshot.sh
 
-server-update: ## Full server cycle: fetch lists, recalculate, snapshot, publish
+server-update: ## Full server cycle once: fetch lists, recalculate, snapshot, publish
 	scripts/server_update.sh
+
+autoupdate: ## Start the background updater (runs now, then every 3 hours)
+	docker build -t $(LOCAL_IMAGE) .
+	docker rm -f masterchance-updater 2>/dev/null || true
+	docker run -d --name masterchance-updater --restart unless-stopped \
+		--env-file .env \
+		-v $(PWD)/data:/app/data -v $(PWD)/dist:/app/dist \
+		$(LOCAL_IMAGE) scripts/autoupdate.py
+	@echo "Запущено. Логи: docker logs -f masterchance-updater"
+
+autoupdate-logs: ## Follow the updater log
+	docker logs -f masterchance-updater
+
+autoupdate-stop: ## Stop the background updater
+	docker rm -f masterchance-updater
 
 exe: ## Build MasterChance.exe (Windows only; CI does this on windows-latest)
 	pyinstaller packaging/masterchance.spec
