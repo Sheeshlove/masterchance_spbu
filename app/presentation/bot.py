@@ -23,6 +23,8 @@ from app.application.use_cases.get_applicant_forecast import (
     ExamStatus,
     ForecastResult,
     GetApplicantForecastUseCase,
+    Reason,
+    ReasonKind,
 )
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
@@ -90,12 +92,24 @@ def _render_exam_line(exam: ExamStatus) -> str | None:
     return line
 
 
+_REASON_ICONS = {
+    ReasonKind.GOOD: "＋",
+    ReasonKind.BAD: "−",
+    ReasonKind.NEUTRAL: "·",
+}
+
+
+def _render_reasons(reasons: List[Reason], indent: str = "   ") -> List[str]:
+    """Пояснения «почему такой шанс» → строки Markdown со знаком влияния."""
+    return [f"{indent}{_REASON_ICONS[r.kind]} {r.text}" for r in reasons]
+
+
 def _render_forecast(result: ForecastResult) -> str:
     """
     Рендер структуры прогноза в Markdown:
       1) Направления + строка про экзамены (баллы/даты).
-      2) 🔮 Прогноз зачисления (условные вероятности) + проходные.
-      3) Блок про «пролёт».
+      2) 🔮 Прогноз зачисления: вероятность, проходной и почему шанс такой.
+      3) Блок про «пролёт» + общие пояснения к модели.
     """
     head_programs = "📝 *Ваши направления*"
     prog_lines: List[str] = []
@@ -112,13 +126,21 @@ def _render_forecast(result: ForecastResult) -> str:
         forecast_lines.append(
             f"• `{it.program_name}`  →  *{p_str}* (проходной: {_fmt_qrange(it.q90, it.q95)})"
         )
+        forecast_lines.extend(_render_reasons(it.reasons))
+        if it.reasons:
+            forecast_lines.append("")
 
     head_fail = (
-        "\n\n🚫 *«Пролетел с магой»*\n"
+        "\n🚫 *«Пролетел с магой»*\n"
         f"• В *{result.fail_cond * 100:.1f}%* симуляций\n"
     )
 
-    return "\n".join([head_programs, *prog_lines, head_forecast, *forecast_lines, head_fail])
+    tail: List[str] = []
+    if result.notes:
+        tail.append("\nℹ️ *Как читать эти числа*")
+        tail.extend(f"• {n.text}" for n in result.notes)
+
+    return "\n".join([head_programs, *prog_lines, head_forecast, *forecast_lines, head_fail, *tail])
 
 
 async def how_cmd(msg: Message):
@@ -145,6 +167,26 @@ async def how_cmd(msg: Message):
     6. **Результат:**
        • если ты попал на направление в 8 000 симуляциях из 10 000, шанс ≈ 80%;
        • считаем также «средний» и «высокий» проходной балл (90 % и 95 % квантиль).
+
+    📉 *Понижается ли проходной, если кто-то уходит в другой вуз?*
+
+    Да — и это главная причина, по которой проходной показан вилкой, а не одним числом.
+    Проходной балл направления = балл самого слабого из зачисленных. Если человек,
+    занимавший последнее место, уходит, его место освобождается и достаётся следующему
+    по списку — а у следующего балл ниже. Значит, проходной в этом сценарии опускается,
+    и подняться он от чужого ухода не может никогда.
+
+    Приоритет тут ничего не меняет: важно, что место освободилось. Разница только в том,
+    куда уходит человек:
+       • **в другой вуз** — модель разыгрывает такой уход для тех, кто не подал согласие
+         ни на одно направление; место освобождается, проходной падает;
+       • **на другое направление внутри вуза** — человек с приоритетом 1 сам туда не уйдёт:
+         приоритет 1 и есть его первый выбор. Он освободит место, только если его выбьет
+         кто-то с более высоким баллом — но тогда место занимает этот более сильный,
+         и проходной, наоборот, подрастает.
+
+    Именно поэтому в объяснении под каждым направлением видно, сколько конкурентов
+    сидят без согласия: чем их больше, тем сильнее «гуляет» проходной вниз.
 
     ⚠️ *Предсказания не гарантируют поступление!*
     Это всего лишь вероятностная модель на основе того, что уже известно.

@@ -28,12 +28,21 @@ from app.application.use_cases.get_applicant_forecast import (
     ExamState,
     ForecastResult,
     GetApplicantForecastUseCase,
+    ReasonKind,
 )
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.presentation.desktop.live import LiveResult, fetch_live_applications
 from app.presentation.desktop.snapshot import SnapshotManager, SnapshotUnavailable
 
 _PAD = 12
+
+# Знак влияния фактора на шанс + tk-тег, которым красится строка объяснения.
+_REASON_NEUTRAL = ("•", "why_neutral")
+_REASON_STYLE = {
+    ReasonKind.GOOD: ("▲", "why_good"),
+    ReasonKind.BAD: ("▼", "why_bad"),
+    ReasonKind.NEUTRAL: _REASON_NEUTRAL,
+}
 
 
 def _fmt_qrange(q90: Optional[float], q95: Optional[float]) -> str:
@@ -135,6 +144,12 @@ class DesktopApp:
         self.out.tag_configure("warn", foreground="#b26a00")
         self.out.tag_configure("fail", font=("Segoe UI", 11, "bold"), foreground="#b3261e",
                                spacing1=12)
+        self.out.tag_configure("why_head", font=("Segoe UI", 9, "bold"), foreground="#555",
+                               spacing1=6)
+        self.out.tag_configure("why_good", foreground="#1a7f37", lmargin1=14, lmargin2=28)
+        self.out.tag_configure("why_bad", foreground="#b3261e", lmargin1=14, lmargin2=28)
+        self.out.tag_configure("why_neutral", foreground="#555", lmargin1=14, lmargin2=28)
+        self.out.tag_configure("note", foreground="#666", lmargin1=14, lmargin2=28)
 
     # ── фоновая работа: очередь колбэков в UI-поток ────────────────────────
     def _run_bg(self, fn: Callable[[], None]) -> None:
@@ -282,11 +297,25 @@ class DesktopApp:
                         "fresh",
                     )
 
+                if it.reasons:
+                    self.out.insert("end", "Почему такой шанс:\n", "why_head")
+                    for reason in it.reasons:
+                        # .get, а не []: новый вид объяснения не должен ронять
+                        # приложение на чужой машине — пусть будет нейтральным
+                        sign, tag = _REASON_STYLE.get(reason.kind, _REASON_NEUTRAL)
+                        self.out.insert("end", f"{sign} {reason.text}\n", tag)
+
             self.out.insert(
                 "end",
                 f"\n«Пролетел с магой»: {result.fail_cond * 100:.1f}% симуляций\n",
                 "fail",
             )
+
+            if result.notes:
+                self.out.insert("end", "\nКак читать эти числа:\n", "why_head")
+                for note in result.notes:
+                    self.out.insert("end", f"• {note.text}\n", "note")
+
             self.out.insert(
                 "end",
                 "\nПрогноз — вероятностная модель, а не гарантия поступления.\n",

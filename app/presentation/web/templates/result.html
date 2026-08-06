@@ -32,6 +32,20 @@
           <span class="exam-text">{{ it.exam.text }}</span>
           {% if it.exam.warn %}<div class="exam-warn">⚠️ {{ it.exam.warn }}</div>{% endif %}
         </div>
+
+        {% if it.reasons %}
+        <details class="why">
+          <summary>Почему такой шанс?</summary>
+          <ul class="why-list">
+            {% for r in it.reasons %}
+            <li class="why-item why-{{ r.cls }}">
+              <span class="why-icon">{{ r.icon }}</span>
+              <span class="why-text">{{ r.text }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
       </article>
       {% endfor %}
     </div>
@@ -39,5 +53,15 @@
     <div class="fail">
       🚫 <b>«Пролетел с магой»</b>: в <b>{{ view.fail_pct }}</b> симуляций не прошёл никуда.
     </div>
+
+    {% if view.notes %}
+    <div class="notes">
+      <b>Как читать эти числа</b>
+      <ul>
+        {% for n in view.notes %}<li>{{ n }}</li>{% endfor %}
+      </ul>
+      <a href="/how">Подробнее о модели →</a>
+    </div>
+    {% endif %}
   </section>
 {% endif %}

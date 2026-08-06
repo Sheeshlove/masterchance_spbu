@@ -11,8 +11,10 @@ from app.application.use_cases.get_applicant_forecast import (
     ExamStatus,
     ForecastItem,
     ForecastResult,
+    Reason,
+    ReasonKind,
 )
-from app.presentation.web.view import exam_view, fmt_update, to_view
+from app.presentation.web.view import exam_view, fmt_update, reason_view, to_view
 
 
 def _item(**kw) -> ForecastItem:
@@ -135,3 +137,36 @@ def test_exam_view_finished_with_and_without_warning():
 def test_fmt_update():
     assert fmt_update(datetime(2026, 6, 22, 6, 0)) == "22.06.2026 06:00"
     assert fmt_update(None) == "нет данных"
+
+
+# ───────────────────── объяснение «почему такой шанс» ────────────────────────
+
+def test_reason_view_maps_kind_to_css_class_and_icon():
+    assert reason_view(Reason(ReasonKind.GOOD, "х"))["cls"] == "good"
+    assert reason_view(Reason(ReasonKind.BAD, "х"))["cls"] == "bad"
+    assert reason_view(Reason(ReasonKind.NEUTRAL, "х"))["cls"] == "neutral"
+    assert reason_view(Reason(ReasonKind.GOOD, "х"))["icon"] == "\u25b2"
+    assert reason_view(Reason(ReasonKind.BAD, "х"))["icon"] == "\u25bc"
+
+
+def test_reasons_land_on_the_program_card():
+    view = to_view(_result(items=[_item(reasons=[
+        Reason(ReasonKind.GOOD, "По баллу вы 1-й из 10."),
+        Reason(ReasonKind.BAD, "Ещё 5 человек без баллов."),
+    ])]))
+    reasons = view["programs"][0]["reasons"]
+
+    assert [r["cls"] for r in reasons] == ["good", "bad"]
+    assert reasons[0]["text"] == "По баллу вы 1-й из 10."
+
+
+def test_notes_are_plain_strings_for_the_template():
+    view = to_view(_result(notes=[Reason(ReasonKind.NEUTRAL, "Проходной показан вилкой.")]))
+    assert view["notes"] == ["Проходной показан вилкой."]
+
+
+def test_view_without_reasons_has_empty_lists():
+    """Старый снапшот без объяснений — шаблон просто не покажет блок."""
+    view = to_view(_result())
+    assert view["programs"][0]["reasons"] == []
+    assert view["notes"] == []

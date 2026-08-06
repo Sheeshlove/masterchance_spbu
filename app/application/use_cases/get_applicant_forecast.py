@@ -18,11 +18,15 @@ from zoneinfo import ZoneInfo
 
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
-from app.domain.models import Application, ExamSession
+from app.domain.models import Application, ExamSession, ProgramCompetition
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 # Расписание экзаменов и submission_stats хранятся в МСК, tz-naive.
 _SRC_TZ = ZoneInfo("Europe/Moscow")
+
+# Сколько сценариев прогоняет Монте-Карло (см. recalculate_monte_carlo.py).
+# Нужно только для текста объяснения.
+N_SIMULATIONS = 10_000
 
 
 class ExamState(str, Enum):
@@ -49,6 +53,19 @@ class ExamStatus:
     recently_finished: bool = False  # последний экзамен был < 3 дней назад
 
 
+class ReasonKind(str, Enum):
+    """Как объяснение влияет на шанс — чтобы UI мог его подкрасить."""
+    GOOD = "good"        # работает на пользователя
+    BAD = "bad"          # работает против
+    NEUTRAL = "neutral"  # просто расклад
+
+
+@dataclass
+class Reason:
+    kind: ReasonKind
+    text: str
+
+
 @dataclass
 class ForecastItem:
     program_code: str
@@ -58,6 +75,8 @@ class ForecastItem:
     q90: float | None
     q95: float | None
     exam: ExamStatus
+    competition: ProgramCompetition | None = None
+    reasons: list[Reason] = field(default_factory=list)  # «почему такой шанс»
 
 
 @dataclass
@@ -67,6 +86,8 @@ class ForecastResult:
     items: list[ForecastItem]
     fail_cond: float              # условная вероятность «пролёта», 0..1
     last_update: datetime | None  # tz-aware, settings.timezone
+    p_excluded: float = 0.0       # доля сценариев, где модель увела самого абитуриента
+    notes: list[Reason] = field(default_factory=list)  # общие пояснения к прогнозу
 
 
 def _to_local(dt_naive_msk: datetime) -> datetime:
@@ -129,6 +150,196 @@ def _build_exam_status(app: Application | None, sessions: list[ExamSession] | No
     )
 
 
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение числительного: 1 место, 2 места, 5 мест."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def _num(x: float) -> str:
+    """Дробное число по-русски: 6.9 → «6,9»."""
+    return f"{x:.1f}".replace(".", ",")
+
+
+def _build_reasons(
+    comp: ProgramCompetition | None,
+    q90: float | None,
+    q95: float | None,
+    p_excluded: float,
+) -> list[Reason]:
+    """
+    Разложить шанс на понятные человеку слагаемые.
+
+    Монте-Карло выдаёт одно число, и без объяснения оно выглядит как гадание.
+    Здесь те же входные данные пересказываются словами — в том порядке, в
+    котором на исход влияет сама модель: сколько мест, где ты в очереди, как
+    балл соотносится с прогнозом проходного, что делает приоритет и кто из
+    конкурентов может уйти.
+
+    Текст собирается один раз здесь, а не в боте/сайте/десктопе, чтобы три
+    интерфейса не начали объяснять одно и то же по-разному.
+    """
+    if comp is None:
+        return []
+
+    reasons: list[Reason] = []
+    seats = comp.seats or 0
+
+    # 1. Сколько мест и сколько желающих.
+    if seats > 0 and comp.applications <= seats:
+        reasons.append(Reason(
+            ReasonKind.GOOD,
+            f"Мест — {seats}, заявок — {comp.applications}: желающих меньше, чем мест.",
+        ))
+    elif seats > 0:
+        per_seat = comp.applications / seats
+        # дробное числительное по-русски всегда в родительном единственного:
+        # «3,4 человека», а не «3,4 человек»
+        word = ("человека" if per_seat != int(per_seat)
+                else _plural(int(per_seat), "человек", "человека", "человек"))
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"Мест — {seats}, заявок — {comp.applications}: "
+            f"{_num(per_seat)} {word} на место.",
+        ))
+    else:
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"Заявок — {comp.applications}. Сколько мест, вуз пока не опубликовал, "
+            f"поэтому шанс здесь оценить не на чем.",
+        ))
+
+    # 2. Где абитуриент в очереди по баллу.
+    if comp.my_total_score:
+        place = comp.better + 1
+        line = (
+            f"По баллу вы {place}-й из {comp.scored_rivals + 1} "
+            f"{_plural(comp.scored_rivals + 1, 'человека', 'человек', 'человек')} "
+            f"с уже известными баллами."
+        )
+        kind = ReasonKind.GOOD if seats and place <= seats else ReasonKind.BAD
+        if seats and place <= seats:
+            line += " Сейчас это внутри мест."
+        elif seats:
+            line += f" Это ниже {seats}-го места — нужно, чтобы кто-то сверху ушёл."
+        reasons.append(Reason(kind, line))
+
+        if comp.same:
+            reasons.append(Reason(
+                ReasonKind.NEUTRAL,
+                f"Ровно такой же балл ещё у {comp.same} "
+                f"{_plural(comp.same, 'человека', 'человек', 'человек')} — "
+                f"в модели такие ничьи разыгрываются жребием.",
+            ))
+
+        if comp.unscored_rivals:
+            reasons.append(Reason(
+                ReasonKind.BAD,
+                f"Ещё {comp.unscored_rivals} "
+                f"{_plural(comp.unscored_rivals, 'человек', 'человека', 'человек')} "
+                f"пока без баллов — модель разыгрывает их оценки, и часть из них вас обходит.",
+            ))
+    else:
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            "Вашего балла ещё нет. Модель разыгрывает его в каждом сценарии по "
+            "распределению оценок этого экзамена, поэтому шанс — это среднее по "
+            "всем возможным вашим баллам, а не оценка вашей реальной подготовки.",
+        ))
+
+    # 3. Балл против прогноза проходного.
+    if comp.my_total_score and q90 is not None and q95 is not None:
+        score = comp.my_total_score
+        if score >= q95:
+            reasons.append(Reason(
+                ReasonKind.GOOD,
+                f"Ваш балл {score} выше даже осторожного прогноза проходного "
+                f"({q95:.0f}) — запас {score - q95:.0f}.",
+            ))
+        elif score >= q90:
+            reasons.append(Reason(
+                ReasonKind.NEUTRAL,
+                f"Ваш балл {score} попал в вилку прогноза проходного "
+                f"({q90:.0f}–{q95:.0f}) — исход зависит от того, как сдадут остальные.",
+            ))
+        else:
+            reasons.append(Reason(
+                ReasonKind.BAD,
+                f"Ваш балл {score} ниже прогноза проходного "
+                f"({q90:.0f}–{q95:.0f}) — не хватает примерно {q90 - score:.0f}.",
+            ))
+
+    # 4. Приоритет.
+    if comp.my_priority == 1:
+        reasons.append(Reason(
+            ReasonKind.GOOD,
+            "Приоритет 1: сюда вас распределяют в первую очередь, на другие "
+            "направления вы уходите, только если не проходите здесь.",
+        ))
+    elif comp.my_priority and comp.my_priority > 1:
+        n = comp.my_priority - 1
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"Приоритет {comp.my_priority}: сюда вы попадаете, только если не прошли по "
+            f"{n} более приоритетной заявке." if n == 1 else
+            f"Приоритет {comp.my_priority}: сюда вы попадаете, только если не прошли по "
+            f"{n} более приоритетным заявкам.",
+        ))
+
+    # 5. Конкуренты, которых модель может увести в другой вуз.
+    if comp.rivals_without_consent:
+        reasons.append(Reason(
+            ReasonKind.GOOD,
+            f"{comp.rivals_without_consent} из {comp.applications} конкурентов пока нигде "
+            f"не подали согласие. Часть из них модель уводит в другие вузы; освободившееся "
+            f"место достаётся следующему по списку, и проходной в таком сценарии опускается.",
+        ))
+
+    # 6. Согласие самого абитуриента.
+    if comp.my_consent:
+        reasons.append(Reason(
+            ReasonKind.GOOD,
+            "Согласие вы подали — в модели вы точно остаётесь в конкурсе.",
+        ))
+    elif p_excluded > 0:
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"Согласие вы пока не подали, поэтому в {p_excluded * 100:.0f}% сценариев модель "
+            f"уводит в другой вуз и вас. Показанный шанс — при условии, что вы остаётесь.",
+        ))
+
+    return reasons
+
+
+def _build_notes(p_excluded: float) -> list[Reason]:
+    """Пояснения ко всему прогнозу целиком, а не к отдельному направлению."""
+    n_sim = f"{N_SIMULATIONS:,}".replace(",", " ")  # 10 000, как принято по-русски
+    notes = [
+        Reason(
+            ReasonKind.NEUTRAL,
+            f"Шанс — это доля из {n_sim} смоделированных приёмных кампаний, "
+            f"в которых вы прошли именно сюда.",
+        ),
+        Reason(
+            ReasonKind.NEUTRAL,
+            "Проходной показан вилкой, а не одним числом: в разных сценариях он "
+            "разный. Нижняя граница — «обычный» расклад, верхняя — неудачный для вас.",
+        ),
+    ]
+    if p_excluded > 0:
+        notes.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"В {p_excluded * 100:.0f}% сценариев модель уводит вас в другой вуз "
+            f"(согласия нигде нет). Эти сценарии из расчёта исключены — иначе шанс "
+            f"занижался бы за ваше же возможное решение уйти.",
+        ))
+    return notes
+
+
 class GetApplicantForecastUseCase:
     """
     Возвращает структурированный прогноз по коду абитуриента либо None,
@@ -157,6 +368,14 @@ class GetApplicantForecastUseCase:
             code: self._repo.get_exam_sessions_by_program(code) for code in all_codes
         }
 
+        # Расклад конкурса — только ради объяснения; на числа он не влияет.
+        # Старые репозитории (снапшоты у пользователей на руках) метода могут
+        # не знать — тогда просто нет объяснений, а прогноз остаётся.
+        try:
+            competition = self._repo.get_competition_for_programs(all_codes, applicant_id)
+        except AttributeError:
+            competition = {}
+
         # Условные вероятности — как в боте.
         p_excl = diag.p_excluded if diag else 0.0
         p_incl = max(1.0 - p_excl, 1e-9)
@@ -169,6 +388,7 @@ class GetApplicantForecastUseCase:
         for code in all_codes:
             prog = prog_map.get(code)
             q = quantiles.get(code)
+            comp = competition.get(code)
             items.append(
                 ForecastItem(
                     program_code=code,
@@ -178,6 +398,8 @@ class GetApplicantForecastUseCase:
                     q90=q.q90 if q else None,
                     q95=q.q95 if q else None,
                     exam=_build_exam_status(apps_by_code.get(code), sessions_by_code.get(code, [])),
+                    competition=comp,
+                    reasons=_build_reasons(comp, q.q90 if q else None, q.q95 if q else None, p_excl),
                 )
             )
 
@@ -192,4 +414,6 @@ class GetApplicantForecastUseCase:
             items=items,
             fail_cond=fail_cond,
             last_update=last_update,
+            p_excluded=p_excl,
+            notes=_build_notes(p_excl),
         )
