@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import re
 import urllib.parse
-import urllib.request
 from typing import List, TypedDict
+
+from app.infrastructure.http import urlopen
 
 _META_RE = re.compile(
     r'<script[^>]*id="priem-list-02-report-meta"[^>]*>(.*?)</script>',
@@ -89,7 +90,7 @@ def fetch_report_html(url: str | None = None, timeout: int = 60) -> str:
         url or build_report_url(),
         headers={"User-Agent": _USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (доверенный хост СПбГУ)
+    with urlopen(req, timeout=timeout) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         return resp.read().decode(charset, errors="replace")
 

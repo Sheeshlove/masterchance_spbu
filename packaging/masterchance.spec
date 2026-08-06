@@ -43,6 +43,11 @@ a = Analysis(
     datas=[],
     hiddenimports=[
         "sqlalchemy.dialects.sqlite",
+        # certifi импортируется лениво внутри функции; указываем явно, чтобы
+        # сработал хук PyInstaller и набор корневых сертификатов попал в сборку.
+        # Без него приложение падает с CERTIFICATE_VERIFY_FAILED.
+        "certifi",
+        "app.infrastructure.http",
         "app.presentation.desktop.ui",
         "app.presentation.desktop.live",
         "app.presentation.desktop.snapshot",

@@ -18,9 +18,12 @@ import gzip
 import json
 import os
 import shutil
+import ssl
 import tempfile
 import urllib.error
 import urllib.request
+
+from app.infrastructure.http import urlopen
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -85,6 +88,23 @@ def should_refresh(meta: Optional[SnapshotMeta], now: datetime, ttl: timedelta =
 
 class SnapshotUnavailable(RuntimeError):
     """Снапшота нет ни в кэше, ни в сети."""
+
+
+def _explain(exc: BaseException) -> str:
+    """Человеческое объяснение вместо сырой ошибки сети."""
+    text = str(exc)
+    if "CERTIFICATE_VERIFY_FAILED" in text or isinstance(exc, ssl.SSLError):
+        return (
+            "Не удалось установить защищённое соединение: на компьютере нет "
+            "проверочных сертификатов. Обычно помогает обновление приложения "
+            "до свежей версии."
+        )
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 404:
+            return ("Данные ещё не опубликованы (сервер ответил «не найдено»). "
+                    "Загляните позже.")
+        return f"Сервер ответил ошибкой {exc.code}."
+    return f"Не удалось скачать данные и нет локальной копии: {exc}"
 
 
 class SnapshotManager:
@@ -152,9 +172,7 @@ class SnapshotManager:
             if have_cache:
                 say(f"Нет связи — работаем на сохранённых данных ({type(exc).__name__}).")
                 return self.db_path
-            raise SnapshotUnavailable(
-                f"Не удалось скачать данные и нет локальной копии: {exc}"
-            ) from exc
+            raise SnapshotUnavailable(_explain(exc)) from exc
 
         say("Данные обновлены." if updated else "Данные уже актуальны.")
         return self.db_path
@@ -170,7 +188,7 @@ class SnapshotManager:
 
         req = urllib.request.Request(self._url, headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=60)  # noqa: S310 (наш release-URL)
+            resp = urlopen(req, timeout=60)
         except urllib.error.HTTPError as e:
             if e.code == 304:  # not modified
                 self._touch_meta(meta)

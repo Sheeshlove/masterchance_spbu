@@ -2,5 +2,6 @@
 # Намеренно без numpy/pandas/numba/selenium: Монте-Карло считается на сервере,
 # клиент читает готовый снапшот. tkinter входит в состав Python.
 SQLAlchemy~=2.0.41
+certifi>=2024.7.4
 pydantic~=2.11.7
 pydantic-settings~=2.10.1

@@ -33,6 +33,7 @@ from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from app.domain.models import Application, SubmissionStats
+from app.infrastructure.http import urlopen
 from app.infrastructure.parser.base import IApplicationsParser
 from app.infrastructure.parser.spbgu.spbgu_programs import (
     _USER_AGENT,
@@ -303,7 +304,7 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
                 "User-Agent": _USER_AGENT,
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
         return list(data.get("blocks") or [])
 
