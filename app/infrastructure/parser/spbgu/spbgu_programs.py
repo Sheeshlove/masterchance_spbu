@@ -14,6 +14,7 @@ HTML со встроенным JSON `<script id="priem-list-02-report-meta">`, �
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import urllib.parse
@@ -68,6 +69,52 @@ class DiscoveredProgram(TypedDict):
     department_code: str
     is_international: bool
     list_ref: str
+
+
+def stable_program_code(speciality_code: str, program_name: str, education_form: str = "") -> str:
+    """
+    Постоянный внутренний код программы.
+
+    UUID специальности брать нельзя: он принадлежит конкретной выгрузке отчёта.
+    Когда вуз перезаливает отчёт, UUID меняются, сохранённый каталог протухает,
+    запросы уходят по несуществующим кодам и списки приходят пустыми.
+
+    Поэтому код собирается из того, что от выгрузки не зависит: кода
+    направления, названия образовательной программы и формы обучения (одна и та
+    же программа бывает очной и очно-заочной). Название нормализуется — регистр,
+    пробелы, кавычки и тире не должны менять код.
+
+        stable_program_code("45.04.01", "Славянские языки и литературы (…)")
+        → 'spbgu:45.04.01:1f4a9c2b'
+    """
+    normalized = _normalize_name(program_name)
+    form = _normalize_name(education_form)
+    digest = hashlib.sha1(f"{speciality_code}|{normalized}|{form}".encode("utf-8")).hexdigest()[:8]
+    return f"spbgu:{speciality_code}:{digest}"
+
+
+def _normalize_name(text: str) -> str:
+    """Привести название к виду, устойчивому к косметическим правкам."""
+    s = (text or "").lower().replace("ё", "е")
+    s = re.sub(r"[«»\"'`]", "", s)      # кавычки любого вида
+    s = re.sub(r"[–—−]", "-", s)        # тире любого вида
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def namespaced_department(speciality_code: str) -> str:
+    """'01.04.02' → 'spbgu:01.04.02'.
+
+    Коды направлений федеральные, а таблица departments не разделена по
+    источникам. Префикс не даёт разным источникам делить один department_code —
+    он же exam_id в Monte-Carlo, то есть баллы за разные экзамены смешались бы.
+    """
+    return f"spbgu:{speciality_code}"
+
+
+def namespaced_institute(speciality_code: str) -> str:
+    """'01.04.02' → 'spbgu:01' — укрупнённая группа направлений."""
+    return f"spbgu:{speciality_code.split('.')[0]}"
 
 
 def build_report_url(base_url: str | None = None, **overrides: str) -> str:

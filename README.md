@@ -239,14 +239,14 @@ SPBGU_BASE_URL=https://enrollelists.spbu.ru/reports/PriemList02.php
 `update_lists.py` берёт список программ **из БД** (`get_programs_by_university`), поэтому
 программы/кафедры/институты должны быть засеяны заранее.
 
-Каталог наполняется скриптом `seed_spbgu_programs.py`: он читает `reportMeta`
-отчёта PriemList02 и записывает институты/направления/программы.
+Каталог наполняется автоматически тем же проходом, что и списки: `update_lists.py`
+обходит специальности текущей выгрузки отчёта и записывает институты,
+направления и программы. Отдельный шаг сидинга не нужен.
 
 ### 5. Обновление данных (по вузам)
 
 ```bash
-python seed_spbgu_programs.py    # один раз: каталог программ
-python update_lists.py           # списки + пересчёт Monte-Carlo
+python update_lists.py           # каталог + списки + пересчёт Monte-Carlo
 
 # только пересчёт MC (например, после обновления нескольких источников):
 python update_lists.py --no-monte-carlo
@@ -279,7 +279,7 @@ python bot.py     # или make run (Docker)
 (`enrollelists.spbu.ru/reports/PriemList02.php`). Браузер не нужен:
 
 - **Каталог программ** — из встроенного в страницу JSON `reportMeta`
-  (`discover_programs`), записывается `seed_spbgu_programs.py`.
+  (`discover_programs`); обновляется тем же проходом, что и списки.
 - **Списки абитуриентов** — `POST /api/reports/priem-list-02/data`, ответ приходит
   готовым HTML-фрагментом на специальность (`block_to_records`).
 

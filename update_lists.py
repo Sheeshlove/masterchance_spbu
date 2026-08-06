@@ -42,7 +42,7 @@ def main():
     # 3) Запуск
     try:
         parallelism = settings.parser_parallelism
-        updater.execute_parallel(parallelism=parallelism, headless=True, university=university)
+        updater.execute_spbgu(parallelism=parallelism)
         logger.info("Данные по подаче заявлений успешно обновлены.")
         print("✅ Данные по подаче заявлений успешно обновлены.")
     except Exception as e:

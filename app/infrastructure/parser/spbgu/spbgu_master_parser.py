@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -39,6 +40,7 @@ from app.infrastructure.parser.spbgu.spbgu_programs import (
     _USER_AGENT,
     extract_report_meta,
     fetch_report_html,
+    stable_program_code,
 )
 
 _DATA_API = "https://enrollelists.spbu.ru/api/reports/priem-list-02/data"
@@ -137,7 +139,8 @@ def parse_block_info(block_html: str) -> dict:
     """
     Разобрать «шапку» блока (инфо-таблицу) в словарь.
 
-    Нужна на этапе сидинга: в reportMeta лежит только название НАПРАВЛЕНИЯ
+    Отсюда берётся название образовательной программы, а по нему —
+    стабильный код. В reportMeta лежит только название НАПРАВЛЕНИЯ
     («Прикладная математика и информатика»), одинаковое у нескольких программ,
     а настоящее имя образовательной программы есть только здесь.
 
@@ -246,6 +249,18 @@ def block_to_records(
     return stats, apps
 
 
+@dataclass
+class SpecialityResult:
+    """Разбор одной специальности: и каталожные поля, и заявки."""
+    program_code: str          # наш стабильный код (не UUID выгрузки)
+    program_name: str          # «Образовательная программа» из шапки
+    speciality_code: str       # направление, напр. 45.04.01
+    education_form: str
+    is_international: bool
+    stats: SubmissionStats
+    applications: List[Application]
+
+
 class SpbguMasterApplicationsParser(IApplicationsParser):
     """
     Парсер одного рейтингового списка магистратуры СПбГУ.
@@ -312,13 +327,55 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
         """
         Шапка блока по одной специальности: настоящее имя образовательной
         программы, форма обучения, КЦП. Используется сидингом каталога
-        (seed_spbgu_programs.py) — в reportMeta этих полей нет.
+        — в reportMeta этих полей нет.
         """
         blocks = self._fetch_speciality_blocks(speciality_id, timeout=timeout)
         html = "".join(b.get("html", "") for b in blocks if isinstance(b, dict))
         return parse_block_info(html) if html else {}
 
+    def parse_speciality(self, speciality_id: str, timeout: int = 60) -> Optional["SpecialityResult"]:
+        """
+        Разобрать одну специальность за ОДИН запрос.
+
+        Блок содержит и шапку (название образовательной программы), и строки,
+        поэтому стабильный код программы выводится здесь же — не нужен ни
+        отдельный проход за названиями, ни хранение UUID выгрузки.
+
+        None — если блок пустой (списки не опубликованы или код устарел).
+        """
+        self._ensure_report()
+        blocks = self._fetch_speciality_blocks(speciality_id, timeout=timeout)
+        html = "".join(b.get("html", "") for b in blocks if isinstance(b, dict))
+        if not html:
+            return None
+
+        info = parse_block_info(html)
+        program_name = info.get("program_name") or info.get("speciality_name") or ""
+        speciality_code = info.get("speciality_code") or ""
+        education_form = info.get("education_form") or ""
+        if not program_name or not speciality_code:
+            return None
+
+        code = stable_program_code(speciality_code, program_name, education_form)
+        stats, applications = block_to_records(html, code, self._generated_at)
+        return SpecialityResult(
+            program_code=code,
+            program_name=program_name,
+            speciality_code=speciality_code,
+            education_form=education_form,
+            is_international="ждунар" in program_name.lower(),
+            stats=stats,
+            applications=applications,
+        )
+
     def parse(self, program_code: str) -> Tuple[SubmissionStats, List[Application]]:
+        """
+        Разбор по нашему коду программы — часть общего контракта парсера.
+
+        Работает только со старыми кодами вида `spbgu:<uuid выгрузки>`. Основной
+        путь обновления теперь идёт через parse_speciality(): он не зависит от
+        того, что вуз перезаливает отчёт с новыми UUID.
+        """
         self._ensure_report()
         speciality_id = program_code.split("spbgu:", 1)[-1]
         blocks = self._fetch_speciality_blocks(speciality_id)

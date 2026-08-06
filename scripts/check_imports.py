@@ -29,7 +29,6 @@ ENTRYPOINTS = [
     "update_lists.py",
     "run_monte_carlo.py",
     "build_snapshot.py",
-    "seed_spbgu_programs.py",
     "seed_synthetic.py",
     "bot.py",
     "web.py",

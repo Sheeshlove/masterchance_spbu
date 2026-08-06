@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config.logger import logger
+from app.domain.models import Department, Institute, Program
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.infrastructure.parser.base import SPBGU, IApplicationsParser
 from app.infrastructure.parser.parallel_master_parser import parse_programs_in_parallel
@@ -57,6 +58,96 @@ class UpdateApplicationListsUseCase:
             raise
 
     # новый параллельный режим
+    def execute_spbgu(self, parallelism: int = 4) -> None:
+        """
+        Обновление СПбГУ одним проходом по текущей выгрузке отчёта.
+
+        Отличие от execute_parallel: список программ берётся не из базы, а из
+        самого отчёта, а код программы вычисляется из её названия и направления
+        (stable_program_code). Поэтому перезаливка отчёта с новыми UUID больше
+        ничего не ломает, а каталог обновляется этим же проходом — отдельный
+        сидинг перестаёт быть обязательным.
+        """
+        from app.infrastructure.parser.parallel_master_parser import (
+            deserialize_speciality,
+            parse_specialities_in_parallel,
+        )
+        from app.infrastructure.parser.spbgu.spbgu_programs import (
+            discover_programs,
+            namespaced_department,
+            namespaced_institute,
+        )
+
+        logger.info("=== Синхронизация СПбГУ (проход по отчёту, N=%d) ===", parallelism)
+        try:
+            discovered = discover_programs()
+            if not discovered:
+                raise RuntimeError("Отчёт не вернул ни одной специальности.")
+            logger.info("В отчёте специальностей: %d", len(discovered))
+
+            records = parse_specialities_in_parallel(
+                [d["list_ref"] for d in discovered], parallelism=parallelism,
+            )
+
+            ok, empty = 0, 0
+            seen_codes: set[str] = set()
+            for rec in records:
+                code = rec["program_code"]
+                stats, applications = deserialize_speciality(rec)
+                seen_codes.add(code)
+
+                # каталог: институт → направление → программа
+                spec = rec["speciality_code"]
+                self._repo.add_institute(Institute(
+                    code=namespaced_institute(spec),
+                    name=f"Группа направлений {spec.split('.')[0]}",
+                ))
+                self._repo.add_department(Department(
+                    code=namespaced_department(spec),
+                    name=spec,
+                    institute_code=namespaced_institute(spec),
+                ))
+                self._repo.add_program(Program(
+                    code=code,
+                    name=rec["program_name"],
+                    department_code=namespaced_department(spec),
+                    is_ino=False,
+                    is_international=rec["is_international"],
+                    university=SPBGU,
+                ))
+
+                if not applications:
+                    # см. пояснение в execute_parallel: пустой список не повод
+                    # стирать уже собранные заявки
+                    empty += 1
+                    continue
+
+                self._repo.delete_applications_by_program(code)
+                self._repo.add_applicants_bulk(
+                    [a.applicant_id for a in applications], university=SPBGU,
+                )
+                self._repo.add_applications_bulk(applications)
+                self._repo.add_submission_stats(stats)
+                ok += 1
+
+            if ok == 0:
+                self._repo._session.rollback()
+                raise RuntimeError(
+                    f"Ни по одной программе не получено заявок (пусто: {empty} "
+                    f"из {len(discovered)}). Данные оставлены без изменений. "
+                    f"Диагностика: python scripts/diagnose_spbgu.py"
+                )
+
+            self._repo.commit()
+            logger.info(
+                "✅ Синхронизация СПбГУ завершена. С заявками: %d, пусто: %d, программ в каталоге: %d",
+                ok, empty, len(seen_codes),
+            )
+        except SQLAlchemyError as db_err:
+            logger.exception("Ошибка транзакции, выполняем rollback: %s", db_err)
+            self._repo._session.rollback()
+            raise
+
     def execute_parallel(self, parallelism: int = 4, headless: bool = True, university: str = SPBGU) -> None:
         logger.info(
             "=== Синхронизация списков заявок начинается (параллельно, N=%d, вуз=%s) ===",

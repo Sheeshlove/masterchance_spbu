@@ -1,5 +1,5 @@
 """
-Тесты сидинга каталога СПбГУ: разбор «шапки» блока и неймспейсинг кодов.
+Разбор «шапки» блока и неймспейсинг кодов направлений.
 
 Офлайн, на фикстуре реального блока. Сети не требует.
 """
@@ -9,7 +9,10 @@ import pytest
 
 from app.application.use_cases.get_applicant_forecast import _display_code
 from app.infrastructure.parser.spbgu.spbgu_master_parser import parse_block_info
-from seed_spbgu_programs import namespaced_department, namespaced_institute
+from app.infrastructure.parser.spbgu.spbgu_programs import (
+    namespaced_department,
+    namespaced_institute,
+)
 
 _BLOCK = (Path(__file__).parent / "fixtures" / "spbgu_speciality_block.html").read_text(encoding="utf-8")
 

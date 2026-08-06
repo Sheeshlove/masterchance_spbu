@@ -8,7 +8,7 @@ DOCKER_IMAGE = $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$(IMAGE_NAME)
 # Docker build flags
 DOCKER_BUILD_FLAGS ?= --no-cache
 
-.PHONY: build push all clean help run run-web run-bot run-desktop seed seed-spbgu snapshot publish-snapshot server-update exe test check-imports web-docker compose-up compose-down version bump-version
+.PHONY: build push all clean help run run-web run-bot run-desktop seed snapshot publish-snapshot server-update exe test check-imports web-docker compose-up compose-down version bump-version
 
 help: ## Display this help message
 	@echo "Usage: make [target]"
@@ -48,9 +48,6 @@ run-bot: ## Run the Telegram bot locally
 
 seed: ## Seed the DB with synthetic data for local testing
 	python seed_synthetic.py --reset
-
-seed-spbgu: ## Fill the SPbGU program catalogue (needed before update_lists --university=spbgu)
-	python seed_spbgu_programs.py
 
 run-desktop: ## Run the desktop client from source
 	python desktop.py
