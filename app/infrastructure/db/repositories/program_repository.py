@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.domain.models import (
     Institute, Department, Program,
     SubmissionStats, Applicant, Application, ProgramPassingQuantile, AdmissionProbability, AdmissionDiagnostics,
-    ExamSession
+    ExamSession, ProgramCompetition
 )
 from app.infrastructure.db.models import (
     InstituteModel, DepartmentModel, ProgramModel,
@@ -388,6 +388,78 @@ class ProgramRepository:
             .all()
         )
         return [r.program_code for r in rows]
+
+    def get_competition_for_programs(
+        self, codes: Sequence[str], applicant_id: str
+    ) -> Dict[str, ProgramCompetition]:
+        """
+        Расклад конкурса по каждому из `codes` глазами `applicant_id`.
+
+        Считается по тем же данным, что скармливаются Монте-Карло, чтобы
+        объяснение не разошлось с числом: соперник «без согласия» здесь — это
+        ровно тот, кого модель кладёт в пул оттока (нет согласия ни по одной
+        заявке), а «известный балл» — total_score > 0, как и при импутации.
+        """
+        codes = list(codes)
+        if not codes:
+            return {}
+
+        rows = (
+            self._session.query(
+                ApplicationModel.program_code,
+                ApplicationModel.applicant_id,
+                ApplicationModel.total_score,
+                ApplicationModel.priority,
+                ApplicationModel.consent,
+            )
+            .filter(ApplicationModel.program_code.in_(codes))
+            .all()
+        )
+
+        # Согласие подано хотя бы где-то — признак абитуриента, а не заявки.
+        consented = {
+            r[0]
+            for r in self._session.query(ApplicationModel.applicant_id)
+            .filter(ApplicationModel.consent.is_(True))
+            .distinct()
+            .all()
+        }
+
+        seats = {
+            m.program_code: m.num_places
+            for m in self._session.query(SubmissionStatsModel)
+            .filter(SubmissionStatsModel.program_code.in_(codes))
+            .all()
+        }
+
+        by_code: Dict[str, list] = {code: [] for code in codes}
+        for r in rows:
+            if r.program_code in by_code:
+                by_code[r.program_code].append(r)
+
+        result: Dict[str, ProgramCompetition] = {}
+        for code, prog_rows in by_code.items():
+            mine = next((r for r in prog_rows if r.applicant_id == applicant_id), None)
+            my_score = int(mine.total_score) if mine and mine.total_score else 0
+            rivals = [r for r in prog_rows if r.applicant_id != applicant_id]
+
+            scored = [r for r in rivals if r.total_score and r.total_score > 0]
+            result[code] = ProgramCompetition(
+                program_code=code,
+                seats=seats.get(code),
+                applications=len(prog_rows),
+                scored_rivals=len(scored),
+                better=sum(1 for r in scored if r.total_score > my_score) if my_score else 0,
+                same=sum(1 for r in scored if r.total_score == my_score) if my_score else 0,
+                unscored_rivals=len(rivals) - len(scored),
+                rivals_without_consent=sum(
+                    1 for r in rivals if r.applicant_id not in consented
+                ),
+                my_priority=int(mine.priority) if mine else None,
+                my_total_score=my_score or None,
+                my_consent=bool(mine.consent) if mine else False,
+            )
+        return result
 
     def delete_applications_by_program(self, program_code: str) -> None:
         """

@@ -18,6 +18,8 @@ from app.application.use_cases.get_applicant_forecast import (  # noqa: E402
     ExamStatus,
     ForecastItem,
     ForecastResult,
+    Reason,
+    ReasonKind,
 )
 from app.presentation.bot import (  # noqa: E402
     _fmt_qrange,
@@ -170,3 +172,46 @@ def test_real_forecast_fits_telegram_limit():
     parts = split_message(_render_forecast(result))
     assert all(len(p) <= 4000 for p in parts)
     assert len(parts) >= 1
+
+
+# ───────────────────── объяснение «почему такой шанс» ────────────────────────
+
+def test_reasons_are_rendered_under_the_program():
+    result = _result(items=[_item(reasons=[
+        Reason(ReasonKind.GOOD, "По баллу вы 1-й из 10."),
+        Reason(ReasonKind.BAD, "Ещё 5 человек пока без баллов."),
+        Reason(ReasonKind.NEUTRAL, "Мест — 3, заявок — 10."),
+    ])])
+    text = _render_forecast(result)
+
+    assert "＋ По баллу вы 1-й из 10." in text
+    assert "− Ещё 5 человек пока без баллов." in text
+    assert "· Мест — 3, заявок — 10." in text
+    # объяснение идёт после строки с вероятностью, а не до неё
+    assert text.index("41.7%") < text.index("По баллу вы 1-й")
+
+
+def test_forecast_without_reasons_stays_compact():
+    """Старый снапшот без объяснений не должен ломать вывод."""
+    text = _render_forecast(_result(items=[_item(reasons=[])]))
+    assert "Прогноз зачисления" in text
+    assert "＋" not in text and "−" not in text
+
+
+def test_notes_are_rendered_after_the_fail_block():
+    result = _result(notes=[Reason(ReasonKind.NEUTRAL, "Шанс — это доля из 10 000 сценариев.")])
+    text = _render_forecast(result)
+
+    assert "Как читать эти числа" in text
+    assert "• Шанс — это доля из 10 000 сценариев." in text
+    assert text.index("Пролетел с магой") < text.index("Как читать эти числа")
+
+
+def test_long_explanations_still_fit_telegram_limit():
+    """Объяснения удлиняют сообщение — нарезка обязана его выдержать."""
+    reasons = [Reason(ReasonKind.NEUTRAL, "Очень длинное пояснение. " * 12) for _ in range(6)]
+    items = [_item(program_code=str(700 + i), reasons=reasons) for i in range(8)]
+    parts = split_message(_render_forecast(_result(items=items)))
+
+    assert len(parts) > 1
+    assert all(len(p) <= 4000 for p in parts)

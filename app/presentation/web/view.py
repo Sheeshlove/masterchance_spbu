@@ -11,9 +11,26 @@ from app.application.use_cases.get_applicant_forecast import (
     ExamState,
     ExamStatus,
     ForecastResult,
+    Reason,
+    ReasonKind,
 )
 
 UNIVERSITY_LABELS = {"spbgu": "СПбГУ"}
+
+REASON_ICONS = {
+    ReasonKind.GOOD: "▲",
+    ReasonKind.BAD: "▼",
+    ReasonKind.NEUTRAL: "•",
+}
+
+
+def reason_view(reason: Reason) -> dict:
+    """Пояснение «почему такой шанс» → цвет и значок для шаблона."""
+    return {
+        "cls": reason.kind.value,
+        "icon": REASON_ICONS[reason.kind],
+        "text": reason.text,
+    }
 
 
 def exam_view(exam: ExamStatus) -> dict:
@@ -59,6 +76,7 @@ def to_view(result: ForecastResult) -> dict:
             "prob_width": round((it.prob_cond or 0.0) * 100),
             "qrange": qrange,
             "exam": exam_view(it.exam),
+            "reasons": [reason_view(r) for r in it.reasons],
         })
     return {
         "applicant_id": result.applicant_id,
@@ -66,6 +84,7 @@ def to_view(result: ForecastResult) -> dict:
         "fail_pct": f"{result.fail_cond * 100:.1f}%",
         # ключ НЕ называем "items": в Jinja `view.items` резолвится в метод dict.items
         "programs": items,
+        "notes": [n.text for n in result.notes],
     }
 
 
