@@ -18,6 +18,7 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 from typing import Callable, Optional
 
@@ -31,10 +32,11 @@ from app.application.use_cases.get_applicant_forecast import (
     ReasonKind,
 )
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
+from app.presentation.desktop import theme
 from app.presentation.desktop.live import LiveResult, fetch_live_applications
 from app.presentation.desktop.snapshot import SnapshotManager, SnapshotUnavailable
 
-_PAD = 12
+_PAD = 22
 
 # Знак влияния фактора на шанс + tk-тег, которым красится строка объяснения.
 _REASON_NEUTRAL = ("•", "why_neutral")
@@ -43,6 +45,61 @@ _REASON_STYLE = {
     ReasonKind.BAD: ("▼", "why_bad"),
     ReasonKind.NEUTRAL: _REASON_NEUTRAL,
 }
+
+
+class FlatButton(tk.Label):
+    """
+    Кнопка на основе Label.
+
+    Родные ttk.Button и tk.Button на macOS рисуются системной темой и молча
+    игнорируют background — красная кнопка на них просто не получится. Label
+    красится везде одинаково, поэтому клики и состояния навешиваем руками.
+    """
+
+    def __init__(self, master, text: str, command: Callable[[], None],
+                 *, font, primary: bool = True, **kw) -> None:
+        self._command = command
+        self._primary = primary
+        self._enabled = True
+        super().__init__(
+            master, text=text, font=font, cursor="hand2",
+            padx=20, pady=10, borderwidth=0,
+            **self._colors("normal"), **kw,
+        )
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Enter>", lambda _e: self._paint("hover"))
+        self.bind("<Leave>", lambda _e: self._paint("normal"))
+
+    def _colors(self, state: str) -> dict:
+        if not self._enabled:
+            # белым по бледно-розовому надпись не читается — гасим текст, не фон
+            return ({"background": theme.RED_TINT, "foreground": theme.INK_FAINT}
+                    if self._primary
+                    else {"background": theme.SURFACE_2, "foreground": theme.INK_FAINT})
+        if self._primary:
+            bg = {"normal": theme.RED, "hover": theme.RED_DEEP, "press": theme.RED_DEEP}[state]
+            return {"background": bg, "foreground": "#FFFFFF"}
+        bg = {"normal": theme.SURFACE_2, "hover": theme.RED_TINT, "press": theme.RED_TINT}[state]
+        return {"background": bg, "foreground": theme.INK if state == "normal" else theme.RED}
+
+    def _paint(self, state: str) -> None:
+        self.configure(**self._colors(state))
+
+    def _on_press(self, _e) -> None:
+        if self._enabled:
+            self._paint("press")
+
+    def _on_release(self, _e) -> None:
+        if not self._enabled:
+            return
+        self._paint("hover")
+        self._command()
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self.configure(cursor="hand2" if enabled else "arrow")
+        self._paint("normal")
 
 
 def _fmt_qrange(q90: Optional[float], q95: Optional[float]) -> str:
@@ -82,74 +139,108 @@ class DesktopApp:
 
         self.root = tk.Tk()
         self.root.title("MasterChance — посмотри свои шансы")
-        self.root.geometry("760x620")
-        self.root.minsize(620, 460)
+        self.root.geometry("820x680")
+        self.root.minsize(660, 500)
+        self.root.configure(background=theme.PAPER)
 
+        self._pick_fonts()
         self._build_widgets()
         self.root.after(80, self._drain_events)
         self._run_bg(self._load_snapshot)
 
+    # ── шрифты ─────────────────────────────────────────────────────────────
+    def _pick_fonts(self) -> None:
+        """Выбрать ближайшее к сайту из того, что реально стоит в системе."""
+        available = tkfont.families(self.root)
+        self.f_display = theme.pick_family(available, theme.DISPLAY_STACK)
+        self.f_sans = theme.pick_family(available, theme.SANS_STACK)
+        self.f_mono = theme.pick_family(available, theme.MONO_STACK)
+
     # ── построение интерфейса ──────────────────────────────────────────────
     def _build_widgets(self) -> None:
-        head = ttk.Frame(self.root, padding=(_PAD, _PAD, _PAD, 0))
-        head.pack(fill="x")
+        head = tk.Frame(self.root, background=theme.PAPER)
+        head.pack(fill="x", padx=_PAD, pady=(_PAD, 0))
 
-        ttk.Label(
+        tk.Label(
             head,
             text="Посмотри свои шансы на магистратуру",
-            font=("Segoe UI", 15, "bold"),
+            font=(self.f_display, 24),
+            background=theme.PAPER, foreground=theme.INK,
+            anchor="w", justify="left",
         ).pack(anchor="w")
-        ttk.Label(
+        tk.Label(
             head,
             text="Введите свой уникальный код поступающего.",
-            foreground="#555",
-        ).pack(anchor="w", pady=(2, 0))
+            font=(self.f_sans, 11),
+            background=theme.PAPER, foreground=theme.INK_SOFT,
+        ).pack(anchor="w", pady=(6, 0))
 
-        form = ttk.Frame(self.root, padding=(_PAD, _PAD, _PAD, 0))
-        form.pack(fill="x")
+        form = tk.Frame(self.root, background=theme.PAPER)
+        form.pack(fill="x", padx=_PAD, pady=(18, 0))
 
         self.code_var = tk.StringVar()
-        entry = ttk.Entry(form, textvariable=self.code_var, font=("Segoe UI", 12), width=22)
-        entry.pack(side="left")
+        entry = tk.Entry(
+            form, textvariable=self.code_var, font=(self.f_mono, 13), width=18,
+            background=theme.SURFACE, foreground=theme.INK,
+            insertbackground=theme.RED, relief="flat",
+            highlightthickness=1,
+            highlightbackground=theme.LINE, highlightcolor=theme.RED,
+        )
+        entry.pack(side="left", ipady=8, ipadx=8)
         entry.bind("<Return>", lambda _e: self._on_lookup())
         entry.focus_set()
 
-        self.lookup_btn = ttk.Button(form, text="Показать шансы", command=self._on_lookup)
-        self.lookup_btn.pack(side="left", padx=(8, 0))
+        self.lookup_btn = FlatButton(form, "Показать шансы", self._on_lookup,
+                                     font=(self.f_sans, 11, "bold"))
+        self.lookup_btn.pack(side="left", padx=(10, 0))
 
-        self.refresh_btn = ttk.Button(form, text="Обновить данные", command=self._on_refresh)
+        self.refresh_btn = FlatButton(form, "Обновить данные", self._on_refresh,
+                                      font=(self.f_sans, 11), primary=False)
         self.refresh_btn.pack(side="left", padx=(8, 0))
 
         self.status_var = tk.StringVar(value="Загрузка данных…")
-        ttk.Label(
-            self.root, textvariable=self.status_var, foreground="#555", padding=(_PAD, 6)
-        ).pack(fill="x")
+        tk.Label(
+            self.root, textvariable=self.status_var, font=(self.f_mono, 9),
+            background=theme.PAPER, foreground=theme.INK_FAINT, anchor="w",
+        ).pack(fill="x", padx=_PAD, pady=(12, 8))
 
-        body = ttk.Frame(self.root, padding=(_PAD, 0, _PAD, _PAD))
-        body.pack(fill="both", expand=True)
+        body = tk.Frame(self.root, background=theme.PAPER)
+        body.pack(fill="both", expand=True, padx=_PAD, pady=(0, _PAD))
 
-        self.out = tk.Text(body, wrap="word", font=("Segoe UI", 10), relief="flat",
-                           background="#fbfbfd", borderwidth=1, state="disabled")
+        self.out = tk.Text(
+            body, wrap="word", font=(self.f_sans, 11), relief="flat",
+            background=theme.SURFACE, foreground=theme.INK,
+            highlightthickness=1, highlightbackground=theme.LINE,
+            padx=18, pady=16, spacing1=1, spacing3=3,
+            state="disabled",
+        )
         scroll = ttk.Scrollbar(body, command=self.out.yview)
         self.out.configure(yscrollcommand=scroll.set)
         self.out.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        self.out.tag_configure("h1", font=("Segoe UI", 13, "bold"), spacing3=6)
-        self.out.tag_configure("prog", font=("Segoe UI", 11, "bold"), spacing1=10)
-        self.out.tag_configure("dept", foreground="#777")
-        self.out.tag_configure("chance", font=("Segoe UI", 11, "bold"), foreground="#1f5fd0")
-        self.out.tag_configure("muted", foreground="#666")
-        self.out.tag_configure("fresh", foreground="#1a7f37")
-        self.out.tag_configure("warn", foreground="#b26a00")
-        self.out.tag_configure("fail", font=("Segoe UI", 11, "bold"), foreground="#b3261e",
-                               spacing1=12)
-        self.out.tag_configure("why_head", font=("Segoe UI", 9, "bold"), foreground="#555",
-                               spacing1=6)
-        self.out.tag_configure("why_good", foreground="#1a7f37", lmargin1=14, lmargin2=28)
-        self.out.tag_configure("why_bad", foreground="#b3261e", lmargin1=14, lmargin2=28)
-        self.out.tag_configure("why_neutral", foreground="#555", lmargin1=14, lmargin2=28)
-        self.out.tag_configure("note", foreground="#666", lmargin1=14, lmargin2=28)
+        self._configure_tags()
+
+    def _configure_tags(self) -> None:
+        t = self.out.tag_configure
+        t("h1", font=(self.f_display, 19), foreground=theme.INK, spacing3=8)
+        # отступ карточки живёт на «dept»: он идёт первой строкой направления
+        t("dept", font=(self.f_mono, 9), foreground=theme.INK_FAINT, spacing1=26, spacing3=2)
+        t("prog", font=(self.f_sans, 13, "bold"), foreground=theme.INK, spacing3=8)
+        t("label", font=(self.f_mono, 9), foreground=theme.INK_FAINT)
+        t("chance", font=(self.f_sans, 19, "bold"), foreground=theme.RED)
+        t("bar_on", font=(self.f_mono, 9), foreground=theme.RED, spacing1=4)
+        t("bar_off", font=(self.f_mono, 9), foreground=theme.RED_LINE, spacing1=4)
+        t("mono", font=(self.f_mono, 10), foreground=theme.INK)
+        t("muted", foreground=theme.INK_SOFT)
+        t("fresh", foreground=theme.OK)
+        t("warn", foreground=theme.WAIT)
+        t("fail", font=(self.f_sans, 12, "bold"), foreground=theme.RED_DEEP, spacing1=20)
+        t("why_head", font=(self.f_mono, 9), foreground=theme.INK_FAINT, spacing1=12, spacing3=4)
+        t("why_good", foreground=theme.OK, lmargin1=16, lmargin2=30, spacing3=3)
+        t("why_bad", foreground=theme.RED, lmargin1=16, lmargin2=30, spacing3=3)
+        t("why_neutral", foreground=theme.INK_SOFT, lmargin1=16, lmargin2=30, spacing3=3)
+        t("note", foreground=theme.INK_SOFT, lmargin1=16, lmargin2=30, spacing3=3)
 
     # ── фоновая работа: очередь колбэков в UI-поток ────────────────────────
     def _run_bg(self, fn: Callable[[], None]) -> None:
@@ -171,9 +262,8 @@ class DesktopApp:
         self._post(lambda: self.status_var.set(text))
 
     def _set_busy(self, busy: bool) -> None:
-        state = "disabled" if busy else "normal"
-        self._post(lambda: (self.lookup_btn.configure(state=state),
-                            self.refresh_btn.configure(state=state)))
+        self._post(lambda: (self.lookup_btn.set_enabled(not busy),
+                            self.refresh_btn.set_enabled(not busy)))
 
     # ── снапшот ────────────────────────────────────────────────────────────
     def _load_snapshot(self, force: bool = False) -> None:
@@ -275,15 +365,20 @@ class DesktopApp:
                 )
 
             for it in result.items:
-                self.out.insert("end", f"\n{it.program_name}\n", "prog")
                 self.out.insert("end", f"{it.department_code}\n", "dept")
+                self.out.insert("end", f"{it.program_name}\n", "prog")
 
                 chance = f"{it.prob_cond * 100:.1f}%" if it.prob_cond is not None else "—"
-                self.out.insert("end", "Шанс зачисления: ")
-                self.out.insert("end", chance, "chance")
-                self.out.insert(
-                    "end", f"    Проходной (90–95%): {_fmt_qrange(it.q90, it.q95)}\n", "muted"
-                )
+                self.out.insert("end", "ШАНС ЗАЧИСЛЕНИЯ   ", "label")
+                self.out.insert("end", f"{chance}\n", "chance")
+
+                # шкала отметками, как на сайте: одна отметка — один исход
+                on, off = theme.tick_bar(it.prob_cond)
+                self.out.insert("end", on, "bar_on")
+                self.out.insert("end", off + "\n", "bar_off")
+
+                self.out.insert("end", "Проходной (90–95%): ", "label")
+                self.out.insert("end", f"{_fmt_qrange(it.q90, it.q95)}\n", "mono")
 
                 self.out.insert("end", f"{_exam_text(it.exam)}\n", "muted")
 
@@ -298,21 +393,22 @@ class DesktopApp:
                     )
 
                 if it.reasons:
-                    self.out.insert("end", "Почему такой шанс:\n", "why_head")
+                    self.out.insert("end", "ПОЧЕМУ ТАКОЙ ШАНС\n", "why_head")
                     for reason in it.reasons:
                         # .get, а не []: новый вид объяснения не должен ронять
                         # приложение на чужой машине — пусть будет нейтральным
                         sign, tag = _REASON_STYLE.get(reason.kind, _REASON_NEUTRAL)
                         self.out.insert("end", f"{sign} {reason.text}\n", tag)
 
+            # отступ задан spacing1 у тега; лишний \n дал бы двойной провал
             self.out.insert(
                 "end",
-                f"\n«Пролетел с магой»: {result.fail_cond * 100:.1f}% симуляций\n",
+                f"«Пролетел с магой»: {result.fail_cond * 100:.1f}% симуляций\n",
                 "fail",
             )
 
             if result.notes:
-                self.out.insert("end", "\nКак читать эти числа:\n", "why_head")
+                self.out.insert("end", "КАК ЧИТАТЬ ЭТИ ЧИСЛА\n", "why_head")
                 for note in result.notes:
                     self.out.insert("end", f"• {note.text}\n", "note")
 
