@@ -14,7 +14,13 @@ from typing import List
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonWebApp,
+    Message,
+    WebAppInfo,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -200,6 +206,44 @@ async def how_cmd(msg: Message):
     """).strip(), parse_mode="Markdown")
 
 
+WEBAPP_BUTTON_TEXT = "Открыть приложение"
+
+
+def webapp_markup() -> InlineKeyboardMarkup | None:
+    """
+    Кнопка «Открыть приложение» — тот же сайт, но внутри Telegram.
+
+    None, если адрес не настроен или он не https: Telegram принимает Mini App
+    только по https, и на http-адресе кнопка не создастся, а запрос упадёт.
+    Тогда бот просто остаётся обычным ботом.
+    """
+    if not settings.webapp_ready:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text=WEBAPP_BUTTON_TEXT,
+            web_app=WebAppInfo(url=settings.webapp_url),
+        )
+    ]])
+
+
+async def setup_menu_button(bot: Bot) -> None:
+    """Кнопка меню рядом с полем ввода — главный вход в Mini App."""
+    if not settings.webapp_ready:
+        return
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text=WEBAPP_BUTTON_TEXT,
+                web_app=WebAppInfo(url=settings.webapp_url),
+            )
+        )
+        logger.info("Mini App подключён: %s", settings.webapp_url)
+    except Exception as exc:
+        # Недоступный Mini App не повод не запускать бота: он и без него рабочий
+        logger.warning("Не удалось включить кнопку Mini App: %s", exc)
+
+
 async def start_cmd(msg: Message):
     session = _Session()
     repo = ProgramRepository(session)
@@ -213,16 +257,20 @@ async def start_cmd(msg: Message):
     def _fmt(dt: datetime | None) -> str:
         return dt.strftime("%d.%m.%Y %H:%M") if dt else "нет данных"
 
+    markup = webapp_markup()
+    hint = "\n        Или нажми кнопку ниже — там то же самое, но с картинками." if markup else ""
+
     await msg.answer(
         dedent(f"""
         Привет! Отправь мне **код абитуриента** — покажу все направления, шанс зачисления и ориентиры проходных баллов.
-
+{hint}
         Последнее обновление данных: **{_fmt(last_dt)}**
 
         /how — как это работает?
-        По вопросам писать @fascinat00r
+        Автором оригинальной модели и вдохновителем является @fascinat00r
         """).strip(),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=markup,
     )
 
 
@@ -266,6 +314,7 @@ def start_bot(bot_token) -> None:
     dp.message.register(start_cmd, CommandStart())
     dp.message.register(how_cmd, Command("how"))
     dp.message.register(applicant_handler, F.text)
+    dp.startup.register(setup_menu_button)
 
     logger.info("Telegram-бот запущен.")
     asyncio.run(dp.start_polling(bot))

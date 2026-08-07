@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     web_host: str = Field("0.0.0.0", alias="WEB_HOST")
     web_port: int = Field(8080, alias="WEB_PORT")
 
+    # Публичный адрес сайта для Telegram Mini App.
+    # Telegram открывает Mini App только по HTTPS с валидным сертификатом —
+    # http:// и голый IP он молча не примет. Пока адрес не задан, бот работает
+    # как раньше, просто без кнопки «Открыть приложение».
+    webapp_url: str | None = Field(None, alias="WEBAPP_URL")
+
     # Десктоп-клиент: откуда качать снапшот БД с посчитанным Monte-Carlo
     # (собирается build_snapshot.py и публикуется скриптом scripts/publish_snapshot.sh).
     #
@@ -95,6 +101,17 @@ class Settings(BaseSettings):
     @property
     def timezone(self) -> ZoneInfo:
         return ZoneInfo(self.timezone_name)
+
+    @property
+    def webapp_ready(self) -> bool:
+        """
+        Годится ли настроенный адрес для Mini App.
+
+        Telegram принимает только https:// — если отдать ему http, кнопка
+        просто не создастся, а бот упадёт с BadRequest при старте. Лучше
+        промолчать и остаться обычным ботом.
+        """
+        return bool(self.webapp_url and self.webapp_url.startswith("https://"))
 
     @property
     def database_url(self) -> str:

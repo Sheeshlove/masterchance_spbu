@@ -344,3 +344,36 @@ code {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Telegram Mini App.
+   Класс .tg вешает static/telegram.js и только внутри Telegram — в браузере
+   ни одно из этих правил не применяется.
+   ───────────────────────────────────────────────────────────────────────── */
+.tg body { background: var(--paper); }
+
+/* У Telegram своя шапка с названием бота и крестиком: наш логотип её
+   дублировал бы. Навигацию оставляем — без неё из мини-аппа некуда уйти. */
+.tg .topbar {
+  position: static;
+  justify-content: center;
+  padding: 10px 16px;
+  backdrop-filter: none;
+  background: var(--paper);
+}
+.tg .brand { display: none; }
+.tg .topbar nav { justify-content: center; gap: 22px; }
+
+.tg .container {
+  padding-top: 22px;
+  padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+  min-height: calc(var(--tg-viewport, 100vh) - 140px);
+}
+
+/* Мини-апп открывают с телефона: заголовок в три строки съедает пол-экрана. */
+.tg .hero h1 { font-size: clamp(1.9rem, 8vw, 2.4rem); max-width: none; }
+.tg .lookup { margin-top: 20px; }
+.tg .lookup input { flex: 1 1 100%; font-size: 16px; }  /* < 16px → iOS зумит */
+.tg .lookup button { flex: 1 1 100%; padding: 15px 22px; }
+
+.tg .footer { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
