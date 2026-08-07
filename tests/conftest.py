@@ -175,3 +175,21 @@ def seed(session) -> Seeder:
 @pytest.fixture
 def repo(session) -> ProgramRepository:
     return ProgramRepository(session)
+
+
+@pytest.fixture
+def web_client():
+    """
+    HTTP-клиент поверх сайта.
+
+    Приложение поднимается на той же временной БД, что и остальные тесты
+    (её подставляет корневой conftest.py через DATABASE_URL), поэтому запросы
+    ходят по настоящим маршрутам и шаблонам, а не по их пересказу.
+    """
+    pytest.importorskip("httpx", reason="TestClient требует httpx")
+    from fastapi.testclient import TestClient
+
+    from app.presentation.web.app import app
+
+    with TestClient(app) as client:
+        yield client

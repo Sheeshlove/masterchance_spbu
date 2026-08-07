@@ -22,6 +22,7 @@ from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseC
 from app.config.config import settings
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
+from app.presentation import content
 from app.presentation.web.view import fmt_update, to_view
 
 _BASE_DIR = Path(__file__).resolve().parent
@@ -33,6 +34,15 @@ _Session = sessionmaker(bind=_engine, future=True)
 app = FastAPI(title="MasterChance — посмотри свои шансы")
 app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
+
+# Подвал показывается на каждой странице, поэтому его текст — глобальный:
+# иначе его пришлось бы прокидывать в контекст каждого маршрута и рано или
+# поздно забыть в одном из них.
+templates.env.globals.update(
+    footer_note_lead=content.FOOTER_NOTE_LEAD,
+    contact_email=content.CONTACT_EMAIL,
+    disclaimer_short=content.DISCLAIMER_SHORT,
+)
 
 
 def get_repo() -> ProgramRepository:
@@ -60,9 +70,9 @@ def index(request: Request, code: str = "", repo: ProgramRepository = Depends(ge
     view, not_found = _lookup(repo, code)
     last_update = fmt_update(GetLastUpdateTimeUseCase(repo).execute())
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "code": code.strip(),
             "view": view,
             "not_found": not_found,
@@ -76,14 +86,29 @@ def result(request: Request, code: str = "", repo: ProgramRepository = Depends(g
     """Партиал результата (для HTMX-подмены)."""
     view, not_found = _lookup(repo, code)
     return templates.TemplateResponse(
+        request,
         "result.html",
-        {"request": request, "code": code.strip(), "view": view, "not_found": not_found},
+        {"code": code.strip(), "view": view, "not_found": not_found},
     )
 
 
 @app.get("/how", response_class=HTMLResponse)
 def how(request: Request):
-    return templates.TemplateResponse("how.html", {"request": request})
+    return templates.TemplateResponse(request, "how.html")
+
+
+@app.get("/mechanism", response_class=HTMLResponse)
+def mechanism(request: Request):
+    """Весь путь данных: откуда берутся, что с ними происходит, что не собирается."""
+    return templates.TemplateResponse(
+        request,
+        "mechanism.html",
+        {
+            "mechanism": content.MECHANISM,
+            "mechanism_title": content.MECHANISM_TITLE,
+            "mechanism_intro": content.MECHANISM_INTRO,
+        },
+    )
 
 
 @app.get("/healthz", response_class=PlainTextResponse)

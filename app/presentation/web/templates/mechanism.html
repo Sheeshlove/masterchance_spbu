@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ mechanism_title }} — MasterChance{% endblock %}
+
+{% block content %}
+<section class="prose">
+  <h1>{{ mechanism_title }}</h1>
+
+  <p class="lead">{{ mechanism_intro }}</p>
+
+  {% for section in mechanism %}
+  <h2>{{ section.title }}</h2>
+  {% for block in section.blocks %}
+    {% if block.kind == "p" %}
+      <p>{{ block.text }}</p>
+    {% elif block.kind == "list" %}
+      <ul>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% elif block.kind == "note" %}
+      <p class="warnbox">{{ block.text }}</p>
+    {% endif %}
+  {% endfor %}
+  {% endfor %}
+
+  <p><a href="/how">Подробнее про саму модель →</a></p>
+  <p><a href="/">← Вернуться к проверке шансов</a></p>
+</section>
+{% endblock %}

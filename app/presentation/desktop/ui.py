@@ -32,6 +32,7 @@ from app.application.use_cases.get_applicant_forecast import (
     ReasonKind,
 )
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
+from app.presentation import content
 from app.presentation.desktop import theme
 from app.presentation.desktop.live import LiveResult, fetch_live_applications
 from app.presentation.desktop.snapshot import SnapshotManager, SnapshotUnavailable
@@ -136,6 +137,7 @@ class DesktopApp:
         self._snapshots = SnapshotManager(snapshot_url, cache_dir=cache_dir)
         self._db_path: Optional[Path] = None
         self._events: "queue.Queue[Callable[[], None]]" = queue.Queue()
+        self._about_win: Optional[tk.Toplevel] = None
 
         self.root = tk.Tk()
         self.root.title("MasterChance — посмотри свои шансы")
@@ -198,6 +200,10 @@ class DesktopApp:
                                       font=(self.f_sans, 11), primary=False)
         self.refresh_btn.pack(side="left", padx=(8, 0))
 
+        self.about_btn = FlatButton(form, "Как всё устроено", self._on_about,
+                                    font=(self.f_sans, 11), primary=False)
+        self.about_btn.pack(side="left", padx=(8, 0))
+
         self.status_var = tk.StringVar(value="Загрузка данных…")
         tk.Label(
             self.root, textvariable=self.status_var, font=(self.f_mono, 9),
@@ -219,7 +225,21 @@ class DesktopApp:
         self.out.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
+        # Правовая оговорка обязана быть видна всегда, а не только в справке.
+        self.footer = tk.Label(
+            self.root, text=content.FOOTER_NOTE, font=(self.f_mono, 8),
+            background=theme.PAPER, foreground=theme.INK_FAINT,
+            justify="left", anchor="w", wraplength=760,
+        )
+        self.footer.pack(fill="x", padx=_PAD, pady=(0, 14))
+        self.root.bind("<Configure>", self._reflow_footer)
+
         self._configure_tags()
+
+    def _reflow_footer(self, event) -> None:
+        """Оговорка длинная: без пересчёта переноса она обрежется при сужении окна."""
+        if event.widget is self.root:
+            self.footer.configure(wraplength=max(event.width - 2 * _PAD, 240))
 
     def _configure_tags(self) -> None:
         t = self.out.tag_configure
@@ -264,6 +284,60 @@ class DesktopApp:
     def _set_busy(self, busy: bool) -> None:
         self._post(lambda: (self.lookup_btn.set_enabled(not busy),
                             self.refresh_btn.set_enabled(not busy)))
+
+    # ── «Как всё устроено» ─────────────────────────────────────────────────
+    def _on_about(self) -> None:
+        """Отдельное окно с механикой. Текст общий с сайтом (presentation/content.py)."""
+        if getattr(self, "_about_win", None) is not None and self._about_win.winfo_exists():
+            self._about_win.lift()
+            self._about_win.focus_force()
+            return
+
+        win = tk.Toplevel(self.root)
+        self._about_win = win
+        win.title(content.MECHANISM_TITLE)
+        win.geometry("720x680")
+        win.minsize(520, 420)
+        win.configure(background=theme.PAPER)
+
+        frame = tk.Frame(win, background=theme.PAPER)
+        frame.pack(fill="both", expand=True, padx=_PAD, pady=_PAD)
+
+        txt = tk.Text(
+            frame, wrap="word", font=(self.f_sans, 11), relief="flat",
+            background=theme.SURFACE, foreground=theme.INK,
+            highlightthickness=1, highlightbackground=theme.LINE,
+            padx=20, pady=18, state="normal", cursor="arrow",
+        )
+        bar = ttk.Scrollbar(frame, command=txt.yview)
+        txt.configure(yscrollcommand=bar.set)
+        txt.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+
+        t = txt.tag_configure
+        t("title", font=(self.f_display, 21), foreground=theme.INK, spacing3=10)
+        t("intro", foreground=theme.INK_SOFT, spacing3=14)
+        t("head", font=(self.f_sans, 12, "bold"), foreground=theme.INK,
+          spacing1=22, spacing3=6)
+        t("body", foreground=theme.INK_SOFT, spacing3=8)
+        t("item", foreground=theme.INK_SOFT, lmargin1=18, lmargin2=32, spacing3=4)
+        t("note", foreground=theme.RED_DEEP, lmargin1=14, lmargin2=14,
+          spacing1=6, spacing3=8)
+
+        txt.insert("end", f"{content.MECHANISM_TITLE}\n", "title")
+        txt.insert("end", f"{content.MECHANISM_INTRO}\n", "intro")
+        for section in content.MECHANISM:
+            txt.insert("end", f"{section.title}\n", "head")
+            for block in section.blocks:
+                if block.kind == "list":
+                    for item in block.items:
+                        txt.insert("end", f"•  {item}\n", "item")
+                else:
+                    txt.insert("end", f"{block.text}\n",
+                               "note" if block.kind == "note" else "body")
+
+        txt.configure(state="disabled")
+        win.bind("<Escape>", lambda _e: win.destroy())
 
     # ── снапшот ────────────────────────────────────────────────────────────
     def _load_snapshot(self, force: bool = False) -> None:
