@@ -149,3 +149,55 @@ def test_page_still_renders_without_telegram(web_client):
     html = web_client.get("/").text
     assert "telegram-web-app.js" in html
     assert "Посмотри свои шансы" in html
+
+
+# ── развёртывание: домен, nginx, certbot ─────────────────────────────────────
+
+DOMAIN = "masterchance-bot.ru"
+
+
+def test_nginx_config_exists_for_the_domain():
+    conf = Path(f"deploy/nginx/{DOMAIN}.conf")
+    assert conf.is_file(), "нет конфига nginx для домена"
+    text = conf.read_text(encoding="utf-8")
+    assert f"server_name {DOMAIN} www.{DOMAIN};" in text
+    assert "proxy_pass http://127.0.0.1:8080;" in text
+
+
+def test_nginx_forwards_the_scheme():
+    """
+    Без X-Forwarded-Proto приложение за nginx считает, что работает по http.
+    Telegram Mini App на http-ссылке не открывается.
+    """
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    assert "X-Forwarded-Proto $scheme" in text
+
+
+def test_nginx_config_has_no_tls_block():
+    """TLS дописывает certbot и он же обновляет сертификат — руками не лезем."""
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    assert "ssl_certificate" not in text
+    assert "listen 443" not in text
+
+
+def test_setup_script_is_executable_and_valid():
+    script = Path("scripts/setup_https.sh")
+    assert script.is_file()
+    assert script.stat().st_mode & 0o111, "скрипт не исполняемый"
+    done = subprocess.run(["bash", "-n", str(script)], capture_output=True)
+    assert done.returncode == 0, done.stderr.decode()
+
+
+def test_setup_script_checks_dns_before_certbot():
+    """
+    Главная причина падений на этом шаге — не доехавшая A-запись.
+    Проверка обязана идти раньше certbot, иначе пользователь получит
+    невнятную ошибку вместо понятной.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert text.index("getent ahostsv4") < text.index("certbot --nginx")
+
+
+def test_docs_and_example_use_the_same_domain():
+    for path in (".env.example", "СЕРВЕР.md"):
+        assert DOMAIN in Path(path).read_text(encoding="utf-8"), f"{path} не знает домена"
