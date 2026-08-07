@@ -17,6 +17,7 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -225,16 +226,38 @@ class DesktopApp:
         self.out.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        # Правовая оговорка обязана быть видна всегда, а не только в справке.
+        # Правовая оговорка и авторство обязаны быть видны всегда, а не только
+        # в справке.
+        foot = tk.Frame(self.root, background=theme.PAPER)
+        foot.pack(fill="x", padx=_PAD, pady=(0, 14))
+
         self.footer = tk.Label(
-            self.root, text=content.FOOTER_NOTE, font=(self.f_mono, 8),
+            foot, text=f"{content.FOOTER_NOTE}\n{content.CREDIT_NOTE}.",
+            font=(self.f_mono, 8),
             background=theme.PAPER, foreground=theme.INK_FAINT,
             justify="left", anchor="w", wraplength=760,
         )
-        self.footer.pack(fill="x", padx=_PAD, pady=(0, 14))
+        self.footer.pack(fill="x", anchor="w")
+
+        repo = tk.Label(
+            foot, text=f"{content.REPO_LABEL}: {content.REPO_URL}",
+            font=(self.f_mono, 8),
+            background=theme.PAPER, foreground=theme.RED,
+            cursor="hand2", anchor="w",
+        )
+        repo.pack(fill="x", anchor="w", pady=(4, 0))
+        repo.bind("<Button-1>", lambda _e: self._open_repo())
+
         self.root.bind("<Configure>", self._reflow_footer)
 
         self._configure_tags()
+
+    def _open_repo(self) -> None:
+        # браузер может не открыться (нет DE, нет прав) — это не повод падать
+        try:
+            webbrowser.open_new_tab(content.REPO_URL)
+        except Exception:
+            self._set_status(f"Откройте вручную: {content.REPO_URL}")
 
     def _reflow_footer(self, event) -> None:
         """Оговорка длинная: без пересчёта переноса она обрежется при сужении окна."""

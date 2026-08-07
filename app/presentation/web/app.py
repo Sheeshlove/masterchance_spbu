@@ -41,6 +41,11 @@ templates = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
 templates.env.globals.update(
     footer_note_lead=content.FOOTER_NOTE_LEAD,
     contact_email=content.CONTACT_EMAIL,
+    credit_lead=content.CREDIT_LEAD,
+    original_author=content.ORIGINAL_AUTHOR,
+    original_author_url=content.ORIGINAL_AUTHOR_URL,
+    repo_url=content.REPO_URL,
+    repo_label=content.REPO_LABEL,
     disclaimer_short=content.DISCLAIMER_SHORT,
 )
 

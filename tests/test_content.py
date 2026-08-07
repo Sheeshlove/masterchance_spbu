@@ -53,6 +53,38 @@ def test_note_reaches_every_page(web_client):
         assert "не аффилированы" in html, f"нет оговорки на {url}"
 
 
+# ── авторство исходной модели и ссылка на код ────────────────────────────────
+
+def test_credit_names_the_original_author():
+    assert content.CREDIT_NOTE == (
+        "Автором оригинальной модели и вдохновителем является @fascinat00r"
+    )
+    assert content.CREDIT_NOTE == content.CREDIT_LEAD + content.ORIGINAL_AUTHOR
+
+
+def test_credit_and_repo_are_on_every_page(web_client):
+    for url in ("/", "/how", "/mechanism"):
+        html = web_client.get(url).text
+        assert "Автором оригинальной модели и вдохновителем является" in html, url
+        assert content.ORIGINAL_AUTHOR in html, url
+        assert content.REPO_URL in html, f"нет ссылки на репозиторий на {url}"
+
+
+def test_old_questions_link_is_gone(web_client):
+    """Ссылку «Вопросы → …» заменили на указание авторства — она не должна остаться."""
+    assert "Вопросы →" not in web_client.get("/").text
+
+
+def test_desktop_shows_credit_and_repo():
+    ui = Path("app/presentation/desktop/ui.py").read_text(encoding="utf-8")
+    assert "content.CREDIT_NOTE" in ui
+    assert "content.REPO_URL" in ui
+
+
+def test_repo_url_points_at_this_project():
+    assert content.REPO_URL == "https://github.com/Sheeshlove/masterchance_spbu"
+
+
 # ── страница «Как всё устроено» ──────────────────────────────────────────────
 
 def test_mechanism_page_renders_every_section(web_client):

@@ -14,6 +14,18 @@ from dataclasses import dataclass, field
 AUTHOR = "Sheeshlove"
 CONTACT_EMAIL = "Egorsheeshwork@yandex.ru"
 
+#: Автор исходной модели, с которой всё началось.
+ORIGINAL_AUTHOR = "@fascinat00r"
+ORIGINAL_AUTHOR_URL = "https://t.me/fascinat00r"
+
+REPO_URL = "https://github.com/Sheeshlove/masterchance_spbu"
+REPO_LABEL = "Исходный код на GitHub"
+
+#: Как и оговорка ниже, разделено на «до ника» и сам ник: на сайте ник —
+#: ссылка, в десктопе просто текст, а фраза должна остаться одна.
+CREDIT_LEAD = "Автором оригинальной модели и вдохновителем является "
+CREDIT_NOTE = f"{CREDIT_LEAD}{ORIGINAL_AUTHOR}"
+
 #: Оговорка в подвале, всё кроме адреса. Отдельно от него, потому что на сайте
 #: адрес — ссылка mailto, а в tkinter просто текст: иначе фразу пришлось бы
 #: держать в двух местах и однажды поправить только в одном.
@@ -141,6 +153,8 @@ MECHANISM: list[Section] = [
 
     Section("7. Кто это сделал", [
         p(FOOTER_NOTE),
+        p(f"{CREDIT_NOTE}."),
+        p(f"Проект открытый — код целиком можно посмотреть здесь: {REPO_URL}"),
         p("Это независимый любительский проект. Университет к нему "
           "отношения не имеет, ответов на вопросы о приёме здесь нет — "
           "с ними нужно в приёмную комиссию."),

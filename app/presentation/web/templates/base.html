@@ -29,9 +29,11 @@
   <footer class="footer">
     <p class="footer-note">{{ footer_note_lead
       }}<a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
+    <p class="footer-note">{{ credit_lead
+      }}<a href="{{ original_author_url }}" rel="noopener">{{ original_author }}</a></p>
     <p class="footer-row">
       <span>{{ disclaimer_short }}</span>
-      <a href="https://t.me/fascinat00r">Вопросы → @fascinat00r</a>
+      <a href="{{ repo_url }}" rel="noopener">{{ repo_label }} →</a>
     </p>
   </footer>
 </body>
