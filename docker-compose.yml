@@ -1,12 +1,22 @@
-# Бот и веб-интерфейс на одном образе, общая БД через том ./data.
-# Запуск:  docker compose up --build        (поднимет оба сервиса)
-#          docker compose up web             (только сайт)
-#          docker compose up bot             (только бот)
+# Три сервиса на одном образе, общая база через том ./data.
+#
+#   docker compose up -d --build          поднять всё
+#   docker compose up -d --build web      только сайт
+#   docker compose logs -f updater        смотреть, как идёт обновление
+#   docker compose down                   остановить всё
+#
+# Кто за что отвечает:
+#   updater — раз в 3 часа тянет списки, считает Монте-Карло, публикует снапшот;
+#   web     — сайт и Telegram Mini App (наружу через nginx, см. СЕРВЕР.md);
+#   bot     — Telegram-бот.
+#
+# Данные считает ТОЛЬКО updater. bot и web их лишь показывают, поэтому
+# перезапускать их можно в любой момент без потери чего-либо.
 services:
-  bot:
+  updater:
     build: .
     image: masterchance:local
-    command: ["bot.py"]
+    command: ["scripts/autoupdate.py"]
     env_file:
       - .env
     environment:
@@ -14,6 +24,7 @@ services:
       TIMEZONE: Europe/Moscow
     volumes:
       - ./data:/app/data
+      - ./dist:/app/dist      # сюда кладётся снапшот перед публикацией
     restart: unless-stopped
 
   web:
@@ -28,7 +39,22 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: "8080"
     ports:
-      - "8080:8080"
+      # только на localhost: наружу пускает nginx, который держит сертификат.
+      # Без 127.0.0.1 порт 8080 торчал бы в интернет по голому http.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  bot:
+    build: .
+    image: masterchance:local
+    command: ["bot.py"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      TIMEZONE: Europe/Moscow
     volumes:
       - ./data:/app/data
     restart: unless-stopped

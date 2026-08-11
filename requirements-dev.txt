@@ -3,9 +3,11 @@
 #   requirements-desktop.txt — SQLAlchemy/pydantic (use case, репозиторий, клиент)
 #   aiogram                  — рендеринг Telegram-бота (иначе эти тесты пропускаются)
 #   fastapi/jinja2/httpx     — маршруты и шаблоны сайта через TestClient
+#   PyYAML                   — разбор docker-compose.yml в тестах инструкции
 -r requirements-desktop.txt
 pytest~=9.1
 aiogram~=3.21
 fastapi~=0.115.0
 jinja2~=3.1.4
 httpx~=0.28
+PyYAML~=6.0
