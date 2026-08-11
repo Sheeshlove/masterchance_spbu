@@ -11,13 +11,22 @@ from scipy.stats import gaussian_kde
 from app.config.config import settings
 from app.config.logger import logger
 
-MAX_EXAM_SCORE = 100
-MAX_ID_ACHIEVEMENTS = 10
-MAX_TOTAL_SCORE = MAX_EXAM_SCORE + MAX_ID_ACHIEVEMENTS
+# Шкала вступительного испытания у разных экзаменов разная: у большинства
+# направлений СПбГУ это 100 баллов, а, например, у 38.04.02 — 200. Раньше сотня
+# была зашита глобально, и всё, что выше, модель считала «неизвестным»: баллы
+# ≥ 100 выпадали из статистики, а импутация не могла выдать больше 100 даже там,
+# где потолок вдвое выше. Теперь шкала определяется по каждому экзамену
+# отдельно, а вся статистика считается в ДОЛЯХ от неё — только так сравнимы
+# баллы человека, сдававшего и по 100-, и по 200-балльной шкале.
+MIN_EXAM_SCALE = 100
 SCORE_COL = "vi_score"
 
 KDE_RESAMPLE_N = 10_000
 RANK_SCALE = 100
+
+# Сетка для CDF в долях шкалы: шаг 0,5 %. Одна и та же для всех экзаменов,
+# поэтому разные шкалы сравнимы и хранятся в одном массиве.
+FRACTION_BINS = 200
 
 
 def _kde_resample(kde: gaussian_kde, n: int, rng: np.random.Generator) -> np.ndarray:
@@ -270,45 +279,79 @@ class AdmissionMonteCarlo:
         for k in list(self._rows_by_app_exam):
             self._rows_by_app_exam[k] = np.asarray(self._rows_by_app_exam[k], dtype=np.int32)
 
-        # --- Персональные средние (μ) ---------------------------------------
+        # --- Шкала каждого экзамена -----------------------------------------
+        # Берём по наблюдаемому максимуму, но не ниже 100: если по экзамену
+        # результатов ещё мало, лучше считать шкалу обычной, чем занизить её
+        # до максимума пары случайных баллов.
+        self.exam_scale = np.full(self.n_exams, MIN_EXAM_SCALE, np.int32)
+        for j in range(self.n_exams):
+            observed = self.vi_score[(self.exam_idx == j) & (self.vi_score > 0)]
+            if observed.size:
+                self.exam_scale[j] = max(MIN_EXAM_SCALE, int(observed.max()))
+        self.row_scale = self.exam_scale[self.exam_idx].astype(np.float64)
+        non_standard = {
+            eid: int(self.exam_scale[j])
+            for eid, j in self._exam2idx.items()
+            if self.exam_scale[j] != MIN_EXAM_SCALE
+        }
+        if non_standard:
+            logger.info("   экзамены не со 100-балльной шкалой: %s", non_standard)
+
+        # --- Персональные средние (μ), в долях шкалы -------------------------
+        # Балл на потолке шкалы исключаем — там скапливаются «упёршиеся в
+        # максимум», и распределение в этой точке уже не про способности.
+        # Раньше это была глобальная сотня, из-за чего на 200-балльном экзамене
+        # выбрасывалась вся верхняя половина.
         logger.info("→ вычисляем personal_mu …")
-        known = (self.vi_score > 0) & (self.vi_score < MAX_EXAM_SCORE)
+        known = (self.vi_score > 0) & (self.vi_score < self.row_scale)
+        known_frac = self.vi_score[known] / self.row_scale[known]
+
         sums = np.bincount(self.applicant_idx[known],
-                           self.vi_score[known].astype(np.float32),
+                           known_frac.astype(np.float32),
                            minlength=self.n_applicants)
         cnts = np.bincount(self.applicant_idx[known], minlength=self.n_applicants)
+        # personal_mu — доля от шкалы (0..1), а не сырой балл: иначе у человека
+        # с 90 из 100 и 180 из 200 среднее «135» не значит ничего.
         self.personal_mu = np.zeros(self.n_applicants, np.float32)
         mask = cnts > 0
         self.personal_mu[mask] = sums[mask] / cnts[mask]
         logger.debug("   персональный μ есть у %d / %d абитуриентов.", mask.sum(), self.n_applicants)
 
         # --- KDE → CDF по каждому экзамену (fallback → глобальная CDF) ------
+        # Всё в долях шкалы, поэтому сетка бинов одна на все экзамены.
         logger.info("→ строим KDE → CDF (%d точек)…", KDE_RESAMPLE_N)
-        self._exam_cdf = np.zeros((self.n_exams, MAX_EXAM_SCORE), np.float32)
+        self._exam_cdf = np.zeros((self.n_exams, FRACTION_BINS), np.float32)
 
-        global_samples = self.vi_score[known].astype(np.float64)
-        g_kde = gaussian_kde(global_samples, bw_method="scott")
-        g_raw = _kde_resample(g_kde, KDE_RESAMPLE_N, self.rng)
-        g_raw = np.clip(np.rint(g_raw), 1, MAX_EXAM_SCORE).astype(int)
-        g_hist = np.bincount(g_raw, minlength=MAX_EXAM_SCORE + 1)[1:].astype(np.float32)
-        self.global_cdf = np.cumsum(g_hist / g_hist.sum())
+        def _cdf_from(samples: np.ndarray) -> np.ndarray | None:
+            """Доли → CDF по сетке FRACTION_BINS. None, если выборка непригодна."""
+            if samples.size < 2 or np.ptp(samples) <= 0:
+                return None
+            try:
+                kde = gaussian_kde(samples, bw_method="scott")
+                raw = _kde_resample(kde, KDE_RESAMPLE_N, self.rng)
+            except Exception:
+                return None
+            bins = np.clip(np.ceil(raw * FRACTION_BINS), 1, FRACTION_BINS).astype(int)
+            hist = np.bincount(bins, minlength=FRACTION_BINS + 1)[1:].astype(np.float32)
+            if hist.sum() <= 0:
+                return None
+            return np.cumsum(hist / hist.sum())
+
+        global_frac = known_frac.astype(np.float64)
+        self.global_cdf = _cdf_from(global_frac)
+        if self.global_cdf is None:  # вырожденные данные — равномерная доля
+            self.global_cdf = np.linspace(1.0 / FRACTION_BINS, 1.0, FRACTION_BINS, dtype=np.float32)
 
         for eid, j in self._exam2idx.items():
             mask_e = (self.exam_idx == j) & known
-            samples = self.vi_score[mask_e].astype(np.float64)
-            if samples.size >= 2 and np.ptp(samples) > 0:
-                try:
-                    kde = gaussian_kde(samples, bw_method="scott")
-                    raw = _kde_resample(kde, KDE_RESAMPLE_N, self.rng)
-                    raw = np.clip(np.rint(raw), 1, MAX_EXAM_SCORE).astype(int)
-                    hist = np.bincount(raw, minlength=MAX_EXAM_SCORE + 1)[1:].astype(np.float32)
-                    self._exam_cdf[j] = np.cumsum(hist / hist.sum())
-                    logger.debug("   exam %s: KDE ok (%d образцов, σ=%.2f)", eid, samples.size, samples.std(ddof=1))
-                    continue
-                except Exception:
-                    pass
-            self._exam_cdf[j] = self.global_cdf
-            logger.debug("   exam %s: fallback → глобальная CDF", eid)
+            cdf = _cdf_from((self.vi_score[mask_e] / self.row_scale[mask_e]).astype(np.float64))
+            if cdf is None:
+                self._exam_cdf[j] = self.global_cdf
+                logger.debug("   exam %s: fallback → глобальная CDF", eid)
+            else:
+                self._exam_cdf[j] = cdf
+                logger.debug("   exam %s: KDE ok (шкала %d, %d образцов)",
+                             eid, self.exam_scale[j], int(mask_e.sum()))
 
         # --- Места по программам --------------------------------------------
         self.seats_per_program = np.zeros(self.n_programs, np.int32)
@@ -322,7 +365,9 @@ class AdmissionMonteCarlo:
         self._apps_by_applicant: Dict[str, List[str]] = (
             applications.groupby("applicant_id")["program_code"].apply(list).to_dict()
         )
-        self.global_sigma = float(global_samples.std(ddof=1)) if global_samples.size else 15.0
+        # Разброс тоже в долях шкалы — иначе σ, посчитанная в основном по
+        # 100-балльным экзаменам, применялась бы к 200-балльному как есть.
+        self.global_sigma = float(global_frac.std(ddof=1)) if global_frac.size else 0.15
 
         # --- Заморозка нулей по истёкшим экзаменам (подготовка) -------------
         # Для каждой группы (applicant×exam) отметим freeze, если:
@@ -429,14 +474,16 @@ class AdmissionMonteCarlo:
                 if self._freeze_group.get((a_idx, e_idx), False):
                     continue
 
-                # Иначе имитируем
+                # Иначе имитируем. Разыгрывается ДОЛЯ от шкалы, и только потом
+                # она переводится в баллы этого экзамена: 0,9 на 100-балльном —
+                # это 90, а на 200-балльном — 180.
+                scale = int(self.exam_scale[e_idx])
                 if self.personal_mu[a_idx] > 0:
-                    score = self.rng.normal(self.personal_mu[a_idx], self.global_sigma)
-                    score = int(np.clip(np.rint(score), 1, MAX_EXAM_SCORE))
+                    frac = self.rng.normal(self.personal_mu[a_idx], self.global_sigma)
                 else:
                     u = float(self.rng.random())
-                    score = 1 + int(np.searchsorted(self._exam_cdf[e_idx], u))
-                vi[rows] = score
+                    frac = (1 + int(np.searchsorted(self._exam_cdf[e_idx], u))) / FRACTION_BINS
+                vi[rows] = int(np.clip(round(frac * scale), 1, scale))
 
         total = (vi + self.id_ach).astype(np.int16)
         jitter = self.rng.random(self._rows).astype(np.float32)
