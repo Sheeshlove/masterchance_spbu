@@ -14,7 +14,13 @@ from app.application.use_cases.get_applicant_forecast import (
     Reason,
     ReasonKind,
 )
-from app.presentation.web.view import exam_view, fmt_update, reason_view, to_view
+from app.presentation.web.view import (
+    exam_view,
+    fmt_update,
+    group_view,
+    reason_view,
+    to_view,
+)
 
 
 def _item(**kw) -> ForecastItem:
@@ -48,39 +54,68 @@ def test_programs_key_not_named_items():
     В Jinja `view.items` резолвится в метод dict.items, а не в наш список,
     поэтому ключ обязан называться иначе. Регрессия на реальный баг.
     """
-    view = to_view(_result())
-    assert "programs" in view
-    assert "items" not in view
-    assert isinstance(view["programs"], list)
+    group = group_view(_result())
+    assert "programs" in group
+    assert "items" not in group
+    assert isinstance(group["programs"], list)
 
 
 def test_percentages_and_bar_width():
-    view = to_view(_result())
-    program = view["programs"][0]
+    group = group_view(_result())
+    program = group["programs"][0]
     assert program["prob_pct"] == "41.7%"
     assert program["prob_width"] == 42          # ширина полосы — целые проценты
-    assert view["fail_pct"] == "56.0%"
+    assert group["fail_pct"] == "56.0%"
 
 
 def test_missing_probability_renders_dash():
-    view = to_view(_result(items=[_item(prob_cond=None)]))
-    program = view["programs"][0]
+    program = group_view(_result(items=[_item(prob_cond=None)]))["programs"][0]
     assert program["prob_pct"] == "—"
     assert program["prob_width"] == 0           # без данных полосы нет
 
 
 def test_qrange_formats():
-    assert to_view(_result(items=[_item(q90=221.7, q95=225.8)]))["programs"][0]["qrange"] == "222 – 226"
+    assert group_view(_result(items=[_item(q90=221.7, q95=225.8)]))["programs"][0]["qrange"] == "222 – 226"
     # одинаковые квантили — показываем одно число, а не «222 – 222»
-    assert to_view(_result(items=[_item(q90=222.0, q95=222.0)]))["programs"][0]["qrange"] == "222"
-    assert to_view(_result(items=[_item(q90=None, q95=None)]))["programs"][0]["qrange"] == "—"
+    assert group_view(_result(items=[_item(q90=222.0, q95=222.0)]))["programs"][0]["qrange"] == "222"
+    assert group_view(_result(items=[_item(q90=None, q95=None)]))["programs"][0]["qrange"] == "—"
 
 
 def test_university_label_is_human_readable():
-    assert to_view(_result(university="spbgu"))["university"] == "СПбГУ"
-    # незнакомый ключ отдаём как есть, пустой — пустой строкой
-    assert to_view(_result(university="mit"))["university"] == "mit"
-    assert to_view(_result(university=None))["university"] == ""
+    assert group_view(_result(university="spbgu"))["label"] == "СПбГУ"
+    assert group_view(_result(university="hse"))["label"] == "ВШЭ"
+    # незнакомый ключ отдаём как есть, пустой — подписываем нейтрально
+    assert group_view(_result(university="mit"))["label"] == "mit"
+    assert group_view(_result(university=None))["label"] == "Вуз"
+
+
+def test_each_university_gets_its_own_group():
+    """Программы разных вузов не должны оказаться в одном списке."""
+    view = to_view([
+        _result(university="spbgu", applicant_id="1000004",
+                items=[_item(program_name="Матмод")]),
+        _result(university="hse", applicant_id="777",
+                items=[_item(program_name="Прикладная экономика")]),
+    ])
+
+    assert [g["key"] for g in view["groups"]] == ["spbgu", "hse"]
+    assert [g["label"] for g in view["groups"]] == ["СПбГУ", "ВШЭ"]
+    assert [len(g["programs"]) for g in view["groups"]] == [1, 1]
+    assert view["multi"] is True
+    # коды у вузов разные — общий заголовок соврал бы
+    assert view["applicant_id"] == ""
+
+
+def test_single_result_still_renders_one_group():
+    view = to_view(_result(applicant_id="1000004"))
+    assert len(view["groups"]) == 1
+    assert view["multi"] is False
+    assert view["applicant_id"] == "1000004"
+
+
+def test_empty_lookup_gives_no_view():
+    assert to_view([]) is None
+    assert to_view(None) is None
 
 
 def test_exam_view_passed_composes_score_string():
@@ -150,7 +185,7 @@ def test_reason_view_maps_kind_to_css_class_and_icon():
 
 
 def test_reasons_land_on_the_program_card():
-    view = to_view(_result(items=[_item(reasons=[
+    view = group_view(_result(items=[_item(reasons=[
         Reason(ReasonKind.GOOD, "По баллу вы 1-й из 10."),
         Reason(ReasonKind.BAD, "Ещё 5 человек без баллов."),
     ])]))
@@ -161,12 +196,12 @@ def test_reasons_land_on_the_program_card():
 
 
 def test_notes_are_plain_strings_for_the_template():
-    view = to_view(_result(notes=[Reason(ReasonKind.NEUTRAL, "Проходной показан вилкой.")]))
+    view = group_view(_result(notes=[Reason(ReasonKind.NEUTRAL, "Проходной показан вилкой.")]))
     assert view["notes"] == ["Проходной показан вилкой."]
 
 
 def test_view_without_reasons_has_empty_lists():
     """Старый снапшот без объяснений — шаблон просто не покажет блок."""
-    view = to_view(_result())
+    view = group_view(_result())
     assert view["programs"][0]["reasons"] == []
     assert view["notes"] == []

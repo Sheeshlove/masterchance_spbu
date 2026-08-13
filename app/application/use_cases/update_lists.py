@@ -1,14 +1,28 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config.logger import logger
-from app.domain.models import Department, Institute, Program
+from app.domain.models import Application, Department, Institute, Program
+from app.domain.universities import (
+    SPBGU,
+    applicant_key,
+    label,
+    namespaced_department,
+    namespaced_institute,
+    normalize_university,
+)
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
-from app.infrastructure.parser.base import SPBGU, IApplicationsParser
+from app.infrastructure.parser.base import IApplicationsParser
 from app.infrastructure.parser.parallel_master_parser import parse_programs_in_parallel
+
+
+def _namespaced(application: Application, university: str) -> Application:
+    """Заявка с кодом абитуриента, разведённым по вузам."""
+    application.applicant_id = applicant_key(university, application.applicant_id)
+    return application
 
 
 class UpdateApplicationListsUseCase:
@@ -57,63 +71,66 @@ class UpdateApplicationListsUseCase:
             self._repo._session.rollback()
             raise
 
-    # новый параллельный режим
-    def execute_spbgu(self, parallelism: int = 4) -> None:
+    # основной режим: проход по опубликованным спискам вуза
+    def execute_source(self, university: str = SPBGU, parallelism: int = 4) -> int:
         """
-        Обновление СПбГУ одним проходом по текущей выгрузке отчёта.
+        Обновление одного вуза проходом по его опубликованным спискам.
 
-        Отличие от execute_parallel: список программ берётся не из базы, а из
-        самого отчёта, а код программы вычисляется из её названия и направления
-        (stable_program_code). Поэтому перезаливка отчёта с новыми UUID больше
-        ничего не ломает, а каталог обновляется этим же проходом — отдельный
-        сидинг перестаёт быть обязательным.
+        Отличие от execute_parallel: перечень конкурсов берётся не из базы, а
+        от самого вуза, а код программы вычисляется из её названия и
+        направления (stable_program_code). Поэтому перезаливка списков с
+        новыми идентификаторами ничего не ломает, а каталог обновляется этим же
+        проходом — отдельный сидинг не нужен.
+
+        Возвращает число программ, по которым приехали заявки. Бросает
+        RuntimeError, если не приехало ничего: пустой ответ источника — это
+        почти всегда сбой на его стороне, и затирать им уже собранные данные
+        нельзя (см. пояснение в execute_parallel).
         """
-        from app.infrastructure.parser.parallel_master_parser import (
-            deserialize_speciality,
-            parse_specialities_in_parallel,
-        )
-        from app.infrastructure.parser.spbgu.spbgu_programs import (
-            discover_programs,
-            namespaced_department,
-            namespaced_institute,
+        from app.infrastructure.parser.runner import (
+            deserialize_program,
+            discover_listings,
+            fetch_listings_in_parallel,
         )
 
-        logger.info("=== Синхронизация СПбГУ (проход по отчёту, N=%d) ===", parallelism)
+        uni = normalize_university(university)
+        logger.info("=== Синхронизация %s (проход по спискам, N=%d) ===", label(uni), parallelism)
         try:
-            discovered = discover_programs()
-            if not discovered:
-                raise RuntimeError("Отчёт не вернул ни одной специальности.")
-            logger.info("В отчёте специальностей: %d", len(discovered))
+            listings = discover_listings(uni)
+            if not listings:
+                raise RuntimeError(
+                    f"{label(uni)}: не найдено ни одного списка. "
+                    f"Диагностика: python scripts/diagnose_source.py {uni}"
+                )
+            logger.info("[%s] Найдено списков: %d", uni, len(listings))
 
-            records = parse_specialities_in_parallel(
-                [d["list_ref"] for d in discovered], parallelism=parallelism,
-            )
+            records = fetch_listings_in_parallel(uni, listings, parallelism=parallelism)
 
             ok, empty = 0, 0
             seen_codes: set[str] = set()
             for rec in records:
                 code = rec["program_code"]
-                stats, applications = deserialize_speciality(rec)
+                stats, applications = deserialize_program(rec)
                 seen_codes.add(code)
 
                 # каталог: институт → направление → программа
                 spec = rec["speciality_code"]
                 self._repo.add_institute(Institute(
-                    code=namespaced_institute(spec),
+                    code=namespaced_institute(uni, spec),
                     name=f"Группа направлений {spec.split('.')[0]}",
                 ))
                 self._repo.add_department(Department(
-                    code=namespaced_department(spec),
+                    code=namespaced_department(uni, spec),
                     name=spec,
-                    institute_code=namespaced_institute(spec),
+                    institute_code=namespaced_institute(uni, spec),
                 ))
                 self._repo.add_program(Program(
                     code=code,
                     name=rec["program_name"],
-                    department_code=namespaced_department(spec),
+                    department_code=namespaced_department(uni, spec),
                     is_ino=False,
                     is_international=rec["is_international"],
-                    university=SPBGU,
+                    university=uni,
                 ))
 
                 if not applications:
@@ -122,9 +139,15 @@ class UpdateApplicationListsUseCase:
                     empty += 1
                     continue
 
+                # Код абитуриента уникален только внутри своего вуза, поэтому в
+                # базу он кладётся с префиксом. Иначе абитуриент 1645144 из
+                # СПбГУ и абитуриент 1645144 из МГУ стали бы одной строкой, а
+                # Монте-Карло посчитал бы их одним человеком.
+                applications = [_namespaced(a, uni) for a in applications]
+
                 self._repo.delete_applications_by_program(code)
                 self._repo.add_applicants_bulk(
-                    [a.applicant_id for a in applications], university=SPBGU,
+                    [a.applicant_id for a in applications], university=uni,
                 )
                 self._repo.add_applications_bulk(applications)
                 self._repo.add_submission_stats(stats)
@@ -133,20 +156,44 @@ class UpdateApplicationListsUseCase:
             if ok == 0:
                 self._repo._session.rollback()
                 raise RuntimeError(
-                    f"Ни по одной программе не получено заявок (пусто: {empty} "
-                    f"из {len(discovered)}). Данные оставлены без изменений. "
-                    f"Диагностика: python scripts/diagnose_spbgu.py"
+                    f"{label(uni)}: ни по одной программе не получено заявок "
+                    f"(пусто: {empty} из {len(listings)} списков). Данные оставлены "
+                    f"без изменений. Диагностика: python scripts/diagnose_source.py {uni}"
                 )
 
             self._repo.commit()
             logger.info(
-                "✅ Синхронизация СПбГУ завершена. С заявками: %d, пусто: %d, программ в каталоге: %d",
-                ok, empty, len(seen_codes),
+                "✅ %s: с заявками %d, пусто %d, программ в каталоге %d",
+                label(uni), ok, empty, len(seen_codes),
             )
+            return ok
         except SQLAlchemyError as db_err:
             logger.exception("Ошибка транзакции, выполняем rollback: %s", db_err)
             self._repo._session.rollback()
             raise
+
+    def execute_spbgu(self, parallelism: int = 4) -> int:
+        """Совместимое имя для прохода по СПбГУ."""
+        return self.execute_source(SPBGU, parallelism=parallelism)
+
+    def execute_all(self, universities: Sequence[str], parallelism: int = 4) -> dict[str, str]:
+        """
+        Обновить несколько вузов подряд.
+
+        Сбой одного источника не отменяет остальные: вуз мог перенести раздел
+        или лечь на обслуживание, и это не повод остаться вообще без свежих
+        данных. Возвращает {вуз: 'ok: 42' | 'ошибка: …'} — по этому словарю
+        вызывающий печатает итог.
+        """
+        report: dict[str, str] = {}
+        for uni in universities:
+            try:
+                count = self.execute_source(uni, parallelism=parallelism)
+                report[uni] = f"обновлено программ: {count}"
+            except Exception as exc:  # noqa: BLE001 — итог по каждому вузу нужен целиком
+                logger.exception("[%s] Обновление не удалось: %s", uni, exc)
+                report[uni] = f"ошибка: {exc}"
+        return report
 
     def execute_parallel(self, parallelism: int = 4, headless: bool = True, university: str = SPBGU) -> None:
         logger.info(

@@ -1,6 +1,6 @@
 # app/config/config.py
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, model_validator
@@ -33,16 +33,32 @@ class Settings(BaseSettings):
     # к серверу вуза.
     parser_parallelism: int = Field(4, alias="PARSER_PARALLELISM")
 
-    # ───────────────── Источник данных: вуз ───────────────────────────
-    # Поддерживается один вуз — СПбГУ. Ключ сохранён в конфиге и в колонке
-    # `university`, чтобы при необходимости можно было добавить второй источник.
-    university: Literal["spbgu"] = Field("spbgu", alias="UNIVERSITY")
+    # ───────────────── Источники данных: вузы ─────────────────────────
+    # Какие вузы обновлять. 'all' — все поддерживаемые (СПбГУ, ВШЭ, ИТМО,
+    # МГИМО, МГУ, РАНХиГС); можно перечислить через запятую, если нужен один.
+    universities: str = Field("all", alias="UNIVERSITIES")
+    # Вуз по умолчанию для режимов, работающих с одним источником.
+    university: str = Field("spbgu", alias="UNIVERSITY")
+
     # Отчёт «Списки подавших заявление» магистратуры СПбГУ (server-rendered,
     # содержит встроенный reportMeta JSON со справочником программ). Данные
     # абитуриентов подтягиваются POST-запросом к /api/reports/priem-list-02/data.
     spbgu_base_url: str = Field(
         "https://enrollelists.spbu.ru/reports/PriemList02.php", alias="SPBGU_BASE_URL"
     )
+
+    # Стартовые страницы приёмных кампаний остальных пяти вузов. Пустое
+    # значение = «взять адрес по умолчанию» (openlists/specs.py). Разделы приёма
+    # вузы переносят почти каждый сезон, поэтому адрес меняется здесь, а не в
+    # коде: проверить — scripts/diagnose_source.py <вуз>.
+    hse_lists_url: str = Field("", alias="HSE_LISTS_URL")
+    itmo_lists_url: str = Field("", alias="ITMO_LISTS_URL")
+    mgimo_lists_url: str = Field("", alias="MGIMO_LISTS_URL")
+    msu_lists_url: str = Field("", alias="MSU_LISTS_URL")
+    ranepa_lists_url: str = Field("", alias="RANEPA_LISTS_URL")
+
+    # Предохранитель на обход: сколько списков максимум брать с одного вуза.
+    max_lists_per_source: int = Field(400, alias="MAX_LISTS_PER_SOURCE")
 
     # БД
     db_url: str | None = Field(None, alias="DATABASE_URL")
@@ -91,6 +107,17 @@ class Settings(BaseSettings):
     @property
     def timezone(self) -> ZoneInfo:
         return ZoneInfo(self.timezone_name)
+
+    @property
+    def enabled_universities(self) -> tuple[str, ...]:
+        """Вузы из UNIVERSITIES — уже нормализованные и без неизвестных ключей."""
+        from app.domain.universities import parse_university_list
+
+        return parse_university_list(self.universities)
+
+    def lists_url(self, university: str) -> str:
+        """Заданный в .env адрес списков вуза либо '' (тогда берётся дефолтный)."""
+        return (getattr(self, f"{university}_lists_url", "") or "").strip()
 
     @property
     def webapp_ready(self) -> bool:

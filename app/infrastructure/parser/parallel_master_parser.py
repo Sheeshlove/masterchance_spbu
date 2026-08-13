@@ -1,4 +1,12 @@
 # app/infrastructure/parser/parallel_master_parser.py
+"""
+Разбор списков по уже известным кодам программ (режим «каталог из базы»).
+
+Основной путь обновления — app/infrastructure/parser/runner.py: он сам находит
+списки и работает со всеми шестью вузами. Этот модуль обслуживает режим
+`UpdateApplicationListsUseCase.execute_parallel`, где перечень программ берётся
+из базы, а не из свежей выгрузки.
+"""
 from __future__ import annotations
 
 import math
@@ -75,86 +83,6 @@ def _worker_parse_chunk(
             parser.close()
         except Exception:
             pass
-
-
-# --- проход по специальностям текущего отчёта (стабильные коды) ---------------
-
-def _worker_parse_specialities(speciality_ids: List[str], headless: bool = True) -> List[dict]:
-    """
-    Воркер: разбирает специальности текущей выгрузки отчёта.
-
-    Возвращает сериализованные SpecialityResult. Стабильный код программы
-    вычисляется внутри разбора — из шапки блока, которую мы и так скачиваем.
-    """
-    parser = create_parser(university=SPBGU, headless=headless)
-    out: List[dict] = []
-    try:
-        for sp_id in speciality_ids:
-            try:
-                res = parser.parse_speciality(sp_id)
-            except Exception as e:
-                logger.exception("[PID %s] Ошибка разбора специальности %s: %s", os.getpid(), sp_id, e)
-                continue
-            if res is None:
-                logger.warning("[PID %s] Пустой блок по специальности %s", os.getpid(), sp_id)
-                continue
-            out.append({
-                "program_code": res.program_code,
-                "program_name": res.program_name,
-                "speciality_code": res.speciality_code,
-                "education_form": res.education_form,
-                "is_international": res.is_international,
-                "stats": _to_dict(res.stats),
-                "applications": [_to_dict(a) for a in res.applications],
-            })
-        return out
-    finally:
-        try:
-            parser.close()
-        except Exception:
-            pass
-
-
-def parse_specialities_in_parallel(
-    speciality_ids: Iterable[str],
-    parallelism: int = 4,
-    headless: bool = True,
-) -> List[dict]:
-    """
-    Разобрать специальности текущего отчёта в несколько процессов.
-
-    На вход идут UUID из свежей выгрузки, на выход — записи со СТАБИЛЬНЫМ кодом
-    программы. Каталог благодаря этому обновляется тем же проходом, и протухание
-    сохранённых кодов больше не возможно.
-    """
-    ids = list(speciality_ids)
-    if not ids:
-        return []
-
-    n = max(1, int(parallelism))
-    if n == 1 or len(ids) == 1:
-        return _worker_parse_specialities(ids, headless)
-
-    chunks = _chunkify(ids, n)
-    logger.info("Разбор специальностей: %d процессов, %d специальностей", len(chunks), len(ids))
-    started = time.perf_counter()
-
-    aggregated: List[dict] = []
-    with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
-        futures = [pool.submit(_worker_parse_specialities, chunk, headless) for chunk in chunks]
-        for fut in as_completed(futures):
-            aggregated.extend(fut.result())
-
-    logger.info(
-        "Разбор завершён за %.2f сек. С данными: %d из %d",
-        time.perf_counter() - started, len(aggregated), len(ids),
-    )
-    return aggregated
-
-
-def deserialize_speciality(d: dict) -> Tuple[SubmissionStats, List[Application]]:
-    """Обратно в доменные объекты (stats, applications)."""
-    return _from_stats(d["stats"]), [_from_app(a) for a in d["applications"]]
 
 
 # --- public API --------------------------------------------------------------

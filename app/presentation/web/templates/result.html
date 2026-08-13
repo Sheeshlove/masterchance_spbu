@@ -6,62 +6,93 @@
 {% elif view %}
   <section class="result">
     <div class="result-head">
-      <h2>Абитуриент <code>{{ view.applicant_id }}</code></h2>
-      {% if view.university %}<span class="badge">{{ view.university }}</span>{% endif %}
+      <h2>Абитуриент{% if view.applicant_id %} <code>{{ view.applicant_id }}</code>{% endif %}</h2>
+      {% if view.multi %}<span class="badge">вузов: {{ view.groups | length }}</span>{% endif %}
     </div>
 
-    <div class="cards">
-      {% for it in view.programs %}
-      <article class="card">
-        <div class="card-top">
-          <span class="dept">{{ it.dept }}</span>
-          <h3 class="pname">{{ it.name }}</h3>
-        </div>
-
-        <div class="prob">
-          <div class="prob-row">
-            <span class="prob-label">Шанс зачисления</span>
-            <span class="prob-val">{{ it.prob_pct }}</span>
-          </div>
-          <div class="bar"><div class="bar-fill" style="width: {{ it.prob_width }}%"></div></div>
-          <div class="passing muted small">Проходной (90–95%): <b>{{ it.qrange }}</b></div>
-        </div>
-
-        <div class="exam exam-{{ it.exam.cls }}">
-          <span class="exam-icon">{{ it.exam.icon }}</span>
-          <span class="exam-text">{{ it.exam.text }}</span>
-          {% if it.exam.warn %}<div class="exam-warn">⚠️ {{ it.exam.warn }}</div>{% endif %}
-        </div>
-
-        {% if it.reasons %}
-        <details class="why">
-          <summary>Почему такой шанс?</summary>
-          <ul class="why-list">
-            {% for r in it.reasons %}
-            <li class="why-item why-{{ r.cls }}">
-              <span class="why-icon">{{ r.icon }}</span>
-              <span class="why-text">{{ r.text }}</span>
-            </li>
-            {% endfor %}
-          </ul>
-        </details>
-        {% endif %}
-      </article>
+    {# Вкладки на чистом CSS: переключение радиокнопками, без единой строки
+       скрипта. Так вкладки продолжают работать и после подмены блока через
+       HTMX, и внутри Telegram, где лишний JS нам не нужен. #}
+    <div class="tabs" role="group" aria-label="Вузы">
+      {% for g in view.groups %}
+        <input class="tab-radio" type="radio" name="uni-tab" id="uni-tab-{{ loop.index }}"
+               {% if loop.first %}checked{% endif %}
+               aria-label="{{ g.label }}">
       {% endfor %}
-    </div>
 
-    <div class="fail">
-      <b>«Пролетел с магой»</b>: в <b>{{ view.fail_pct }}</b> симуляций не прошёл никуда.
-    </div>
+      <nav class="tab-bar">
+        {% for g in view.groups %}
+          <label class="tab-label" for="uni-tab-{{ loop.index }}">
+            {{ g.label }}<span class="tab-count">{{ g.programs | length }}</span>
+          </label>
+        {% endfor %}
+      </nav>
 
-    {% if view.notes %}
-    <div class="notes">
-      <b>Как читать эти числа</b>
-      <ul>
-        {% for n in view.notes %}<li>{{ n }}</li>{% endfor %}
-      </ul>
-      <a href="/how">Подробнее о модели →</a>
+      <div class="tab-panels">
+        {% for g in view.groups %}
+        <section class="tab-panel" aria-label="{{ g.label }}">
+          <p class="tab-meta muted small">
+            {{ g.label }} · код <code>{{ g.applicant_id }}</code> ·
+            направлений: {{ g.programs | length }}
+          </p>
+
+          <div class="cards">
+            {% for it in g.programs %}
+            <article class="card">
+              <div class="card-top">
+                <span class="dept">{{ it.dept }}</span>
+                <h3 class="pname">{{ it.name }}</h3>
+              </div>
+
+              <div class="prob">
+                <div class="prob-row">
+                  <span class="prob-label">Шанс зачисления</span>
+                  <span class="prob-val">{{ it.prob_pct }}</span>
+                </div>
+                <div class="bar"><div class="bar-fill" style="width: {{ it.prob_width }}%"></div></div>
+                <div class="passing muted small">Проходной (90–95%): <b>{{ it.qrange }}</b></div>
+              </div>
+
+              <div class="exam exam-{{ it.exam.cls }}">
+                <span class="exam-icon">{{ it.exam.icon }}</span>
+                <span class="exam-text">{{ it.exam.text }}</span>
+                {% if it.exam.warn %}<div class="exam-warn">⚠️ {{ it.exam.warn }}</div>{% endif %}
+              </div>
+
+              {% if it.reasons %}
+              <details class="why">
+                <summary>Почему такой шанс?</summary>
+                <ul class="why-list">
+                  {% for r in it.reasons %}
+                  <li class="why-item why-{{ r.cls }}">
+                    <span class="why-icon">{{ r.icon }}</span>
+                    <span class="why-text">{{ r.text }}</span>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </details>
+              {% endif %}
+            </article>
+            {% endfor %}
+          </div>
+
+          <div class="fail">
+            <b>«Пролетел с магой»</b>: в <b>{{ g.fail_pct }}</b> симуляций не прошёл
+            никуда{% if view.multi %} в {{ g.label }}{% endif %}.
+          </div>
+
+          {% if g.notes %}
+          <div class="notes">
+            <b>Как читать эти числа</b>
+            <ul>
+              {% for n in g.notes %}<li>{{ n }}</li>{% endfor %}
+            </ul>
+            <a href="/how">Подробнее о модели →</a>
+          </div>
+          {% endif %}
+        </section>
+        {% endfor %}
+      </div>
     </div>
-    {% endif %}
   </section>
 {% endif %}

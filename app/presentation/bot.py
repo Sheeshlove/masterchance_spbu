@@ -34,6 +34,7 @@ from app.application.use_cases.get_applicant_forecast import (
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
 from app.config.logger import logger
+from app.domain.universities import label as university_label
 from app.infrastructure.db.engine import ensure_indexes, make_engine
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
@@ -55,10 +56,11 @@ _Session = sessionmaker(bind=_engine, future=True)
 # Сессия создаётся внутри функции намеренно: объект Session не потокобезопасен,
 # и заводить его нужно в том же потоке, где он используется.
 
-def _load_forecast(applicant_id: str) -> ForecastResult | None:
+def _load_forecasts(codes: str) -> List[ForecastResult]:
+    """Прогнозы по всем вузам, где нашёлся введённый код (или коды)."""
     session = _Session()
     try:
-        return GetApplicantForecastUseCase(ProgramRepository(session)).execute(applicant_id)
+        return GetApplicantForecastUseCase(ProgramRepository(session)).execute_all(codes)
     finally:
         session.close()
 
@@ -138,6 +140,24 @@ _REASON_ICONS = {
 def _render_reasons(reasons: List[Reason], indent: str = "   ") -> List[str]:
     """Пояснения «почему такой шанс» → строки Markdown со знаком влияния."""
     return [f"{indent}{_REASON_ICONS[r.kind]} {r.text}" for r in reasons]
+
+
+def _render_all(results: List[ForecastResult]) -> str:
+    """
+    Несколько вузов — несколько разделов, а не один общий список.
+
+    Конкурсы в разных вузах независимы: и места, и приоритеты, и «пролетел»
+    считаются внутри своего вуза. Склеенный список создавал бы впечатление
+    одной очереди на всех.
+    """
+    if len(results) == 1:
+        return _render_forecast(results[0])
+
+    blocks = []
+    for result in results:
+        title = university_label(result.university) or "Вуз"
+        blocks.append(f"🏛 *{title}* — код `{result.applicant_id}`\n{_render_forecast(result)}")
+    return "\n\n————————————\n\n".join(blocks)
 
 
 def _render_forecast(result: ForecastResult) -> str:
@@ -283,6 +303,7 @@ async def start_cmd(msg: Message):
     await msg.answer(
         dedent(f"""
         Привет! Отправь мне **код абитуриента** — покажу все направления, шанс зачисления и ориентиры проходных баллов.
+        Код в каждом вузе свой: если подавался в несколько, пришли их через запятую — по каждому будет свой раздел.
 {hint}
         Последнее обновление данных: **{_fmt(last_dt)}**
 
@@ -295,20 +316,20 @@ async def start_cmd(msg: Message):
 
 
 async def applicant_handler(msg: Message):
-    applicant_id = msg.text.strip()
-    if not applicant_id:
+    codes = msg.text.strip()
+    if not codes:
         return
 
     try:
-        result = await asyncio.to_thread(_load_forecast, applicant_id)
-        if result is None:
+        results = await asyncio.to_thread(_load_forecasts, codes)
+        if not results:
             await msg.answer(
-                f"Не найдено заявок для абитуриента `{applicant_id}`.",
+                f"Не найдено заявок для абитуриента `{codes}`.",
                 parse_mode="Markdown"
             )
             return
 
-        full_text = _render_forecast(result)
+        full_text = _render_all(results)
 
         for part in split_message(full_text):
             try:

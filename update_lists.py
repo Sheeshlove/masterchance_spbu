@@ -7,24 +7,38 @@ from app.application.use_cases.recalculate_monte_carlo import RecalculateMonteCa
 from app.application.use_cases.update_lists import UpdateApplicationListsUseCase
 from app.config.config import settings
 from app.config.logger import logger
+from app.domain.universities import (
+    SUPPORTED_UNIVERSITIES,
+    label,
+    parse_university_list,
+)
 from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 
 def main():
-    # вуз-источник: из конфига (UNIVERSITY), с возможностью переопределить CLI-аргументом
-    university = settings.university
-    # Monte-Carlo считается по ВСЕЙ базе сразу, поэтому при обновлении нескольких
-    # вузов подряд его гоняют один раз в конце: --no-monte-carlo пропускает
-    # пересчёт здесь, а run_monte_carlo.py вызывают отдельно.
+    # Какие вузы обновлять: из конфига (UNIVERSITIES), с возможностью
+    # переопределить аргументом --university=hse,itmo или --university=all.
+    universities = settings.enabled_universities
+    # Monte-Carlo считается по всей базе сразу (отдельными прогонами на вуз),
+    # поэтому он идёт один раз в конце: --no-monte-carlo пропускает пересчёт
+    # здесь, а run_monte_carlo.py вызывают отдельно.
     run_mc = True
     for arg in sys.argv[1:]:
         if arg.startswith("--university="):
-            university = arg.split("=", 1)[1].strip().lower()
+            universities = parse_university_list(arg.split("=", 1)[1])
         elif arg == "--no-monte-carlo":
             run_mc = False
-    logger.info("=== masterchance старт (вуз=%s, monte-carlo=%s) ===", university, run_mc)
+
+    if not universities:
+        print("❌ Не задан ни один известный вуз. Проверьте UNIVERSITIES в .env "
+              f"или --university=. Поддерживаются: {', '.join(SUPPORTED_UNIVERSITIES)}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    logger.info("=== masterchance старт (вузы=%s, monte-carlo=%s) ===",
+                ",".join(universities), run_mc)
     # 1) Настройка БД
     engine = make_engine(settings.database_url, echo=settings.db_echo)
     Base.metadata.create_all(engine)
@@ -36,15 +50,15 @@ def main():
     repo = ProgramRepository(session)
     updater = UpdateApplicationListsUseCase(repo=repo)  # parser не нужен для параллельного режима
 
-    # 3) Запуск
-    try:
-        parallelism = settings.parser_parallelism
-        updater.execute_spbgu(parallelism=parallelism)
-        logger.info("Данные по подаче заявлений успешно обновлены.")
-        print("✅ Данные по подаче заявлений успешно обновлены.")
-    except Exception as e:
-        logger.exception("Ошибка при обновлении данных")
-        print("❌ Ошибка при обновлении:", e, file=sys.stderr)
+    # 3) Запуск: по вузу за раз, сбой одного не отменяет остальные
+    report = updater.execute_all(universities, parallelism=settings.parser_parallelism)
+    for uni, outcome in report.items():
+        mark = "✅" if not outcome.startswith("ошибка") else "❌"
+        print(f"{mark} {label(uni)}: {outcome}")
+
+    if all(outcome.startswith("ошибка") for outcome in report.values()):
+        logger.error("Ни один источник не обновился — прогноз не пересчитываем.")
+        print("❌ Ни один вуз не обновился, данные оставлены как были.", file=sys.stderr)
         session.close()
         logger.info("Сессия БД закрыта.")
         sys.exit(1)

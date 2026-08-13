@@ -6,6 +6,7 @@ Jinja-шаблонов. Вынесено из `app.py`, чтобы не тяну
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Iterable, Sequence
 
 from app.application.use_cases.get_applicant_forecast import (
     ExamState,
@@ -14,8 +15,7 @@ from app.application.use_cases.get_applicant_forecast import (
     Reason,
     ReasonKind,
 )
-
-UNIVERSITY_LABELS = {"spbgu": "СПбГУ"}
+from app.domain.universities import label as university_label
 
 REASON_ICONS = {
     ReasonKind.GOOD: "▲",
@@ -59,7 +59,14 @@ def exam_view(exam: ExamStatus) -> dict:
     return {"cls": "done", "icon": "⚪", "text": f"Экзамены завершились (последняя дата: {last})", "warn": warn}
 
 
-def to_view(result: ForecastResult) -> dict:
+def group_view(result: ForecastResult) -> dict:
+    """
+    Один вуз = одна вкладка.
+
+    Смешивать программы разных вузов в общем списке нельзя: у каждого вуза свой
+    конкурс, свои места и свой «пролетел» — сложить их в одну колонку значило бы
+    показать сумму, которой не существует.
+    """
     items = []
     for it in result.items:
         prob_pct = f"{it.prob_cond * 100:.1f}%" if it.prob_cond is not None else "—"
@@ -79,8 +86,9 @@ def to_view(result: ForecastResult) -> dict:
             "reasons": [reason_view(r) for r in it.reasons],
         })
     return {
+        "key": result.university or "",
+        "label": university_label(result.university) or "Вуз",
         "applicant_id": result.applicant_id,
-        "university": UNIVERSITY_LABELS.get(result.university or "", result.university or ""),
         "fail_pct": f"{result.fail_cond * 100:.1f}%",
         # ключ НЕ называем "items": в Jinja `view.items` резолвится в метод dict.items
         "programs": items,
@@ -88,5 +96,33 @@ def to_view(result: ForecastResult) -> dict:
     }
 
 
+def to_view(results: ForecastResult | Sequence[ForecastResult] | None) -> dict | None:
+    """
+    Результаты прогноза → контекст страницы со вкладками по вузам.
+
+    Принимает и один ForecastResult, и список: вызывающему не нужно помнить,
+    нашёлся код в одном вузе или в трёх.
+    """
+    if results is None:
+        return None
+    if isinstance(results, ForecastResult):
+        results = [results]
+    groups = [group_view(r) for r in results]
+    if not groups:
+        return None
+    return {
+        "groups": groups,
+        # Код показываем в шапке, только когда он один на все вкладки: у
+        # разных вузов коды разные, и общий заголовок соврал бы.
+        "applicant_id": groups[0]["applicant_id"] if len({g["applicant_id"] for g in groups}) == 1 else "",
+        "multi": len(groups) > 1,
+    }
+
+
 def fmt_update(dt: datetime | None) -> str:
     return dt.strftime("%d.%m.%Y %H:%M") if dt else "нет данных"
+
+
+def fmt_codes(codes: Iterable[str]) -> str:
+    """Список кодов → строка для поля ввода."""
+    return ", ".join(codes)

@@ -98,7 +98,7 @@ def test_parse_speciality_returns_none_on_empty_block(monkeypatch):
 
 # ── проход по отчёту ──────────────────────────────────────────────────────
 def _record(uuid_unused: str, program_name: str, n_apps: int = 2, speciality="01.04.02"):
-    """Как это возвращает parse_specialities_in_parallel (уже сериализовано)."""
+    """Как это возвращает fetch_listings_in_parallel (уже сериализовано)."""
     code = stable_program_code(speciality, program_name, "очная")
     return {
         "program_code": code,
@@ -125,8 +125,8 @@ def _run(repo, monkeypatch, uuids, records):
                           "is_international": False, "list_ref": u} for u in uuids],
     )
     monkeypatch.setattr(
-        "app.infrastructure.parser.parallel_master_parser.parse_specialities_in_parallel",
-        lambda ids, parallelism=4: records,
+        "app.infrastructure.parser.runner.fetch_listings_in_parallel",
+        lambda university, listings, parallelism=4: records,
     )
     UpdateApplicationListsUseCase(repo=repo).execute_spbgu()
 
@@ -138,7 +138,7 @@ def test_report_uuid_change_does_not_break_anything(repo, monkeypatch):
     """
     _run(repo, monkeypatch, ["uuid-старый"], [_record("uuid-старый", "Теория игр")])
     first = [p.code for p in repo.get_programs_by_university("spbgu")]
-    apps_before = repo.get_applications_by_applicant("1000")
+    apps_before = repo.get_applications_by_applicant("spbgu:1000")
 
     # новая выгрузка: другой UUID, та же программа
     _run(repo, monkeypatch, ["uuid-совсем-другой"], [_record("uuid-совсем-другой", "Теория игр")])
@@ -146,7 +146,7 @@ def test_report_uuid_change_does_not_break_anything(repo, monkeypatch):
 
     assert first == second, "код программы не должен зависеть от UUID выгрузки"
     assert len(repo.get_programs_by_university("spbgu")) == 1, "дубликата быть не должно"
-    assert repo.get_applications_by_applicant("1000")[0].program_code == apps_before[0].program_code
+    assert repo.get_applications_by_applicant("spbgu:1000")[0].program_code == apps_before[0].program_code
 
 
 def test_catalogue_is_filled_by_the_same_pass(repo, monkeypatch):
@@ -163,11 +163,11 @@ def test_catalogue_is_filled_by_the_same_pass(repo, monkeypatch):
 
 def test_all_empty_aborts_without_touching_data(repo, monkeypatch):
     _run(repo, monkeypatch, ["u1"], [_record("u1", "Теория игр", n_apps=2)])
-    before = len(repo.get_applications_by_applicant("1000"))
+    before = len(repo.get_applications_by_applicant("spbgu:1000"))
 
     empty = _record("u1", "Теория игр", n_apps=0)
     empty["applications"] = []
-    with pytest.raises(RuntimeError, match="Ни по одной программе"):
+    with pytest.raises(RuntimeError, match="ни по одной программе"):
         _run(repo, monkeypatch, ["u1"], [empty])
 
-    assert len(repo.get_applications_by_applicant("1000")) == before
+    assert len(repo.get_applications_by_applicant("spbgu:1000")) == before

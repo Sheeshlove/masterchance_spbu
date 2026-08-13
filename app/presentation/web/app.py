@@ -61,14 +61,19 @@ def get_repo() -> ProgramRepository:
 
 
 def _lookup(repo: ProgramRepository, code: str):
-    """Возвращает (view | None, not_found_code | None)."""
+    """
+    Возвращает (view | None, not_found_code | None).
+
+    Кодов в поле может быть несколько — свой на каждый вуз (см. split_codes).
+    Найденное раскладывается по вкладкам, по вкладке на вуз.
+    """
     code = (code or "").strip()
     if not code:
         return None, None
-    result = GetApplicantForecastUseCase(repo).execute(code)
-    if result is None:
+    results = GetApplicantForecastUseCase(repo).execute_all(code)
+    if not results:
         return None, code
-    return to_view(result), None
+    return to_view(results), None
 
 
 @app.get("/", response_class=HTMLResponse)

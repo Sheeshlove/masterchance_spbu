@@ -37,9 +37,9 @@ def test_forecast_is_fetched_outside_the_event_loop(monkeypatch):
         def __init__(self, _repo):
             pass
 
-        def execute(self, _applicant_id):
+        def execute_all(self, _codes):
             where["db"] = threading.current_thread()
-            return None
+            return []
 
     monkeypatch.setattr(bot_module, "GetApplicantForecastUseCase", _StubUseCase)
 
@@ -90,11 +90,11 @@ def test_slow_database_does_not_stall_other_users(monkeypatch):
         def __init__(self, _repo):
             pass
 
-        def execute(self, _applicant_id):
+        def execute_all(self, _codes):
             started.set()
             time_to_wait = 1.0
             threading.Event().wait(time_to_wait)  # имитируем busy_timeout
-            return None
+            return []
 
     monkeypatch.setattr(bot_module, "GetApplicantForecastUseCase", _SlowUseCase)
 

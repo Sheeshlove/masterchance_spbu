@@ -74,11 +74,14 @@ def test_guide_covers_the_whole_path(guide):
 
 def test_guide_uses_the_real_setting_name(guide):
     """
-    Настройка называется UNIVERSITY. Инструкция когда-то писала UNIVERSITIES —
-    такая строка молча игнорируется, и это невозможно заметить.
+    Настройка называется UNIVERSITIES (список вузов). Опечатка в имени молча
+    игнорируется конфигом, и заметить это по работе сервиса невозможно —
+    поэтому имя проверяется здесь.
     """
-    assert "UNIVERSITY=spbgu" in guide
-    assert "UNIVERSITIES" not in guide
+    from app.config.config import Settings
+
+    assert "UNIVERSITIES=" in guide
+    assert "UNIVERSITIES" == Settings.model_fields["universities"].alias
 
 
 def test_guide_only_names_settings_that_exist(guide):

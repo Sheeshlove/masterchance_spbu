@@ -21,9 +21,20 @@ WEB = Path("app/presentation/web")
 def test_footer_note_says_exactly_what_it_must():
     note = content.FOOTER_NOTE
     assert note.startswith("Собрано Sheeshlove.")
-    assert "никак не аффилированы с Санкт-Петербургским Государственным Университетом" in note
+    assert "никак не аффилированы с университетами" in note
     assert "Данные взяты из открытых источников" in note
     assert note.endswith("Egorsheeshwork@yandex.ru")
+
+
+def test_disclaimer_names_every_university_we_show():
+    """
+    Оговорка заявляет непричастность к источникам. Появился седьмой вуз —
+    он обязан появиться и здесь, иначе заявление окажется неполным.
+    """
+    from app.domain.universities import SUPPORTED_UNIVERSITIES, UNIVERSITY_LABELS
+
+    for university in SUPPORTED_UNIVERSITIES:
+        assert UNIVERSITY_LABELS[university] in content.FOOTER_NOTE
 
 
 def test_footer_note_is_assembled_from_one_source():

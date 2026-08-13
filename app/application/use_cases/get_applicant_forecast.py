@@ -19,6 +19,13 @@ from zoneinfo import ZoneInfo
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
 from app.domain.models import Application, ExamSession, ProgramCompetition
+from app.domain.universities import (
+    SUPPORTED_UNIVERSITIES,
+    display_code,
+    raw_applicant_id,
+    split_codes,
+    university_of_applicant,
+)
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 # Расписание экзаменов и submission_stats хранятся в МСК, tz-naive.
@@ -95,16 +102,11 @@ def _to_local(dt_naive_msk: datetime) -> datetime:
     return dt_naive_msk.replace(tzinfo=_SRC_TZ).astimezone(settings.timezone)
 
 
-def _display_code(code: str) -> str:
-    """
-    Убрать служебный префикс вуза: 'spbgu:01.04.02' → '01.04.02'.
-
-    Коды направлений федеральные, а таблица departments не разделена по
-    источникам, поэтому в БД они неймспейснуты. Пользователю префикс показывать
-    незачем, и срезаем мы его здесь — чтобы бот, сайт и десктоп получили это
-    разом.
-    """
-    return code.split(":", 1)[-1]
+#: Коды направлений и абитуриентов лежат в БД с префиксом вуза (см.
+#: app/domain/universities.py). Пользователю префикс показывать незачем — вуз
+#: он и так видит на вкладке, — и срезаем мы его здесь, чтобы бот, сайт и
+#: десктоп получили это разом.
+_display_code = display_code
 
 
 def _build_exam_status(app: Application | None, sessions: list[ExamSession] | None) -> ExamStatus:
@@ -351,6 +353,36 @@ class GetApplicantForecastUseCase:
         self._repo = repo
 
     def execute(self, applicant_id: str) -> ForecastResult | None:
+        """
+        Прогноз по одному коду. Если код совпал сразу в нескольких вузах,
+        вернётся первый — за полным раскладом идите в execute_all().
+        """
+        results = self.execute_all(applicant_id)
+        return results[0] if results else None
+
+    def execute_all(self, codes: str) -> list[ForecastResult]:
+        """
+        Прогнозы по всем вузам, где нашёлся введённый код (или коды).
+
+        Кодов может быть несколько: свой код вуз выдаёт каждый, и человек,
+        подавшийся в СПбГУ и ВШЭ, вводит оба через запятую. Один код тоже
+        может найтись в двух вузах — это разные люди с совпавшим номером,
+        поэтому расклады не смешиваются, а возвращаются раздельно.
+
+        Порядок — как в SUPPORTED_UNIVERSITIES: вкладки на сайте не должны
+        переставляться от запроса к запросу.
+        """
+        keys: list[str] = []
+        for raw in split_codes(codes):
+            for key in self._repo.find_applicant_keys(raw):
+                if key not in keys:
+                    keys.append(key)
+
+        results = [r for r in (self._forecast(key) for key in keys) if r is not None]
+        order = {uni: i for i, uni in enumerate(SUPPORTED_UNIVERSITIES)}
+        return sorted(results, key=lambda r: order.get(r.university or "", len(order)))
+
+    def _forecast(self, applicant_id: str) -> ForecastResult | None:
         all_codes = self._repo.get_program_codes_by_applicant(applicant_id)
         if not all_codes:
             return None
@@ -405,12 +437,14 @@ class GetApplicantForecastUseCase:
             )
 
         first = prog_map.get(all_codes[0])
-        university = first.university if first else None
+        # Вуз берём из ключа абитуриента: он проставлен при загрузке списков и
+        # не зависит от того, попала ли программа в каталог.
+        university = university_of_applicant(applicant_id) or (first.university if first else None)
 
         last_update = GetLastUpdateTimeUseCase(self._repo).execute()
 
         return ForecastResult(
-            applicant_id=applicant_id,
+            applicant_id=raw_applicant_id(applicant_id),
             university=university,
             items=items,
             fail_cond=fail_cond,

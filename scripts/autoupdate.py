@@ -3,7 +3,7 @@
 Бесконечный цикл обновления данных. Запускается ВНУТРИ контейнера.
 
 Один проход:
-    1. списки + каталог  (UpdateApplicationListsUseCase.execute_spbgu)
+    1. списки + каталог  (UpdateApplicationListsUseCase.execute_all по всем вузам)
     2. Monte-Carlo       (RecalculateMonteCarloUseCase)
     3. снапшот           (build_snapshot)
     4. публикация        (scripts/publish_snapshot.sh, если задан GITHUB_TOKEN)
@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.config.config import settings  # noqa: E402
+from app.domain.universities import label  # noqa: E402
 from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine  # noqa: E402
 from app.infrastructure.db.models import Base  # noqa: E402
 from app.infrastructure.db.repositories.program_repository import ProgramRepository  # noqa: E402
@@ -67,10 +68,15 @@ def run_once() -> None:
     repo = ProgramRepository(session)
 
     try:
-        say("Шаг 1/4: списки и каталог…")
-        UpdateApplicationListsUseCase(repo=repo).execute_spbgu(
-            parallelism=settings.parser_parallelism
+        universities = settings.enabled_universities
+        say(f"Шаг 1/4: списки и каталог ({', '.join(label(u) for u in universities)})…")
+        report = UpdateApplicationListsUseCase(repo=repo).execute_all(
+            universities, parallelism=settings.parser_parallelism
         )
+        for uni, outcome in report.items():
+            say(f"   {label(uni)}: {outcome}")
+        if all(outcome.startswith("ошибка") for outcome in report.values()):
+            raise RuntimeError("ни один источник не обновился")
 
         say("Шаг 2/4: Monte-Carlo (10 000 симуляций)…")
         RecalculateMonteCarloUseCase(repo=repo, n_simulations=10_000).execute()

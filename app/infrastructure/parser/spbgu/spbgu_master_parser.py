@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
-from dataclasses import dataclass
 from datetime import datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -34,8 +33,14 @@ from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from app.domain.models import Application, SubmissionStats
+from app.domain.universities import SPBGU
 from app.infrastructure.http import urlopen
-from app.infrastructure.parser.base import IApplicationsParser
+from app.infrastructure.parser.base import (
+    IApplicationsParser,
+    IUniversitySource,
+    ParsedProgram,
+    ProgramListing,
+)
 from app.infrastructure.parser.spbgu.spbgu_programs import (
     _USER_AGENT,
     extract_report_meta,
@@ -249,18 +254,6 @@ def block_to_records(
     return stats, apps
 
 
-@dataclass
-class SpecialityResult:
-    """Разбор одной специальности: и каталожные поля, и заявки."""
-    program_code: str          # наш стабильный код (не UUID выгрузки)
-    program_name: str          # «Образовательная программа» из шапки
-    speciality_code: str       # направление, напр. 45.04.01
-    education_form: str
-    is_international: bool
-    stats: SubmissionStats
-    applications: List[Application]
-
-
 class SpbguMasterApplicationsParser(IApplicationsParser):
     """
     Парсер одного рейтингового списка магистратуры СПбГУ.
@@ -333,7 +326,7 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
         html = "".join(b.get("html", "") for b in blocks if isinstance(b, dict))
         return parse_block_info(html) if html else {}
 
-    def parse_speciality(self, speciality_id: str, timeout: int = 60) -> Optional["SpecialityResult"]:
+    def parse_speciality(self, speciality_id: str, timeout: int = 60) -> Optional[ParsedProgram]:
         """
         Разобрать одну специальность за ОДИН запрос.
 
@@ -358,7 +351,7 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
 
         code = stable_program_code(speciality_code, program_name, education_form)
         stats, applications = block_to_records(html, code, self._generated_at)
-        return SpecialityResult(
+        return ParsedProgram(
             program_code=code,
             program_name=program_name,
             speciality_code=speciality_code,
@@ -385,3 +378,33 @@ class SpbguMasterApplicationsParser(IApplicationsParser):
     def close(self) -> None:
         self._meta = None
         self._generated_at = None
+
+
+class SpbguSource(IUniversitySource):
+    """
+    СПбГУ в общем контракте источников.
+
+    Всё, что умеет парсер отчёта, уже разложено по discover/fetch — адаптер
+    только называет это общими именами, чтобы СПбГУ обновлялся тем же кодом,
+    что и остальные пять вузов, и не остался единственным исключением.
+    """
+
+    university = SPBGU
+
+    def __init__(self, headless: bool = True) -> None:
+        self._parser = SpbguMasterApplicationsParser(headless=headless)
+
+    def discover(self) -> List[ProgramListing]:
+        from app.infrastructure.parser.spbgu.spbgu_programs import discover_programs
+
+        return [
+            ProgramListing(ref=program["list_ref"], title=program["name"])
+            for program in discover_programs()
+        ]
+
+    def fetch(self, listing: ProgramListing) -> List[ParsedProgram]:
+        result = self._parser.parse_speciality(listing.ref)
+        return [result] if result else []
+
+    def close(self) -> None:
+        self._parser.close()

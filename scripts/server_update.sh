@@ -49,15 +49,22 @@ docker_run() {
         "$IMAGE" "$@"
 }
 
-UNIVERSITIES="${UNIVERSITIES:-${UNIVERSITY:-spbpu}}"
+# Список вузов обычно живёт в .env (UNIVERSITIES=all) — контейнер читает его
+# сам. Переменная окружения, если задана, перекрывает: удобно для разового
+# «обнови только ИТМО».
+UNI_ARG=()
+if [ -n "${UNIVERSITIES:-}" ]; then
+    UNI_ARG=("--university=${UNIVERSITIES// /,}")
+    say "=== Обновление данных начато (вузы: ${UNIVERSITIES}) ==="
+else
+    say "=== Обновление данных начато (вузы: из .env) ==="
+fi
 
-say "=== Обновление данных начато (вузы: ${UNIVERSITIES}) ==="
-
+# Одним запуском, а не циклом по вузам: update_lists.py идёт по источникам сам
+# и не останавливается на первом сбое. В цикле из-за `set -e` падение одного
+# вуза оставляло бы остальные пятерых без обновления.
 say "Шаг 1/4: скачиваем списки (самая долгая часть)…"
-for uni in $UNIVERSITIES; do
-    say "  → вуз ${uni}…"
-    docker_run update_lists.py "--university=${uni}" --no-monte-carlo
-done
+docker_run update_lists.py "${UNI_ARG[@]}" --no-monte-carlo
 say "Шаг 1/4 готов."
 
 say "Шаг 2/4: считаем вероятности (10 000 симуляций)…"

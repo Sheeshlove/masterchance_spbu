@@ -32,6 +32,7 @@ from app.application.use_cases.get_applicant_forecast import (
     GetApplicantForecastUseCase,
     ReasonKind,
 )
+from app.domain.universities import label as university_label
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.presentation import content
 from app.presentation.desktop import theme
@@ -451,7 +452,11 @@ class DesktopApp:
             self.out.configure(state="normal")
             self.out.delete("1.0", "end")
 
-            self.out.insert("end", f"Абитуриент {result.applicant_id}\n", "h1")
+            # Вуз в заголовке обязателен: код абитуриента у каждого вуза свой,
+            # и без подписи непонятно, чей это расклад.
+            title = university_label(result.university)
+            head = f"Абитуриент {result.applicant_id}"
+            self.out.insert("end", f"{head} · {title}\n" if title else f"{head}\n", "h1")
             upd = result.last_update.strftime("%d.%m.%Y %H:%M") if result.last_update else "неизвестно"
             self.out.insert("end", f"Шансы рассчитаны на данных от {upd}\n", "muted")
             if live and live.generated_at:

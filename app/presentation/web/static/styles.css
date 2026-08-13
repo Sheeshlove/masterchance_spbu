@@ -167,6 +167,83 @@ code {
   padding: 3px 10px; border-radius: 999px;
 }
 
+/* ── вкладки вузов ───────────────────────────────────────────────────────
+   Программы разных вузов — разные конкурсы, и в одном списке им нельзя:
+   вкладка на вуз. Переключение — на радиокнопках, без скрипта: блок
+   результата подменяется через HTMX, и любой навешенный обработчик пришлось
+   бы вешать заново после каждой подмены.
+   Правил ровно столько, сколько вузов (шесть) — селектора «n-я вкладка»
+   в CSS нет, а шесть строк честнее, чем скрипт ради них.
+   ─────────────────────────────────────────────────────────────────────── */
+.tab-radio { position: absolute; opacity: 0; pointer-events: none; }
+
+.tab-bar {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--line);
+}
+.tab-label {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px; margin-bottom: -1px;
+  cursor: pointer; user-select: none;
+  font-family: var(--mono);
+  font-size: .74rem; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-soft);
+  border: 1px solid transparent; border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.tab-label:hover { color: var(--red); background: var(--surface-2); }
+.tab-count {
+  font-size: .68rem; letter-spacing: 0;
+  color: var(--ink-faint);
+  background: var(--surface-2); border: 1px solid var(--line);
+  padding: 0 6px; border-radius: 999px;
+}
+
+.tab-panel { display: none; }
+.tab-meta { margin: 0 0 16px; }
+.tab-meta code { font-size: .8em; }
+
+/* Активная вкладка: подпись краснеет, панель показывается. */
+#uni-tab-1:checked ~ .tab-bar .tab-label[for="uni-tab-1"],
+#uni-tab-2:checked ~ .tab-bar .tab-label[for="uni-tab-2"],
+#uni-tab-3:checked ~ .tab-bar .tab-label[for="uni-tab-3"],
+#uni-tab-4:checked ~ .tab-bar .tab-label[for="uni-tab-4"],
+#uni-tab-5:checked ~ .tab-bar .tab-label[for="uni-tab-5"],
+#uni-tab-6:checked ~ .tab-bar .tab-label[for="uni-tab-6"] {
+  color: var(--red); border-bottom-color: var(--red);
+}
+#uni-tab-1:checked ~ .tab-bar .tab-label[for="uni-tab-1"] .tab-count,
+#uni-tab-2:checked ~ .tab-bar .tab-label[for="uni-tab-2"] .tab-count,
+#uni-tab-3:checked ~ .tab-bar .tab-label[for="uni-tab-3"] .tab-count,
+#uni-tab-4:checked ~ .tab-bar .tab-label[for="uni-tab-4"] .tab-count,
+#uni-tab-5:checked ~ .tab-bar .tab-label[for="uni-tab-5"] .tab-count,
+#uni-tab-6:checked ~ .tab-bar .tab-label[for="uni-tab-6"] .tab-count {
+  color: var(--red); background: var(--red-tint); border-color: var(--red-line);
+}
+#uni-tab-1:checked ~ .tab-panels .tab-panel:nth-child(1),
+#uni-tab-2:checked ~ .tab-panels .tab-panel:nth-child(2),
+#uni-tab-3:checked ~ .tab-panels .tab-panel:nth-child(3),
+#uni-tab-4:checked ~ .tab-panels .tab-panel:nth-child(4),
+#uni-tab-5:checked ~ .tab-panels .tab-panel:nth-child(5),
+#uni-tab-6:checked ~ .tab-panels .tab-panel:nth-child(6) {
+  display: block;
+}
+/* Клавиатура: радиокнопка невидима, поэтому фокус рисуем на подписи. */
+.tab-radio:focus-visible + .tab-bar .tab-label,
+.tab-radio:focus-visible ~ .tab-bar .tab-label {
+  outline: none;
+}
+#uni-tab-1:focus-visible ~ .tab-bar .tab-label[for="uni-tab-1"],
+#uni-tab-2:focus-visible ~ .tab-bar .tab-label[for="uni-tab-2"],
+#uni-tab-3:focus-visible ~ .tab-bar .tab-label[for="uni-tab-3"],
+#uni-tab-4:focus-visible ~ .tab-bar .tab-label[for="uni-tab-4"],
+#uni-tab-5:focus-visible ~ .tab-bar .tab-label[for="uni-tab-5"],
+#uni-tab-6:focus-visible ~ .tab-bar .tab-label[for="uni-tab-6"] {
+  outline: 2px solid var(--red); outline-offset: 2px;
+}
+
 .cards { display: grid; gap: 16px; }
 .card {
   background: var(--surface);
@@ -332,6 +409,8 @@ code {
 
 @media (max-width: 560px) {
   .container { padding: 30px 16px 64px; }
+  .tab-bar { gap: 2px; }
+  .tab-label { padding: 8px 10px; font-size: .68rem; letter-spacing: .05em; }
   .topbar { padding: 14px 16px; }
   .brand { font-size: 1.18rem; letter-spacing: .06em; }
   .topbar nav a { font-size: .66rem; letter-spacing: .06em; }

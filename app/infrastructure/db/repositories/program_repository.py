@@ -13,6 +13,7 @@ from app.domain.models import (
     SubmissionStats, Applicant, Application, ProgramPassingQuantile, AdmissionProbability, AdmissionDiagnostics,
     ExamSession, ProgramCompetition
 )
+from app.domain.universities import candidate_applicant_keys
 from app.infrastructure.db.models import (
     InstituteModel, DepartmentModel, ProgramModel,
     SubmissionStatsModel, ApplicantModel, ApplicationModel, ProgramQuantileModel, AdmissionProbabilityModel,
@@ -368,6 +369,30 @@ class ProgramRepository:
             .all()
         )
         return {m.code: self._to_department_domain(m) for m in rows}
+
+    def find_applicant_keys(self, raw_code: str) -> List[str]:
+        """
+        Код, который ввёл человек → идентификаторы в базе.
+
+        Коды выдаёт каждый вуз сам, поэтому один и тот же код может найтись в
+        нескольких — это разные люди, и показывать их надо раздельно. Порядок
+        ответа — как в SUPPORTED_UNIVERSITIES, чтобы вкладки на сайте не
+        прыгали от запроса к запросу.
+
+        Ищем по заявкам, а не по таблице абитуриентов: строка абитуриента без
+        единой заявки прогноза не даёт, и предлагать по ней вкладку незачем.
+        """
+        candidates = candidate_applicant_keys(raw_code)
+        if not candidates:
+            return []
+        rows = (
+            self._session.query(ApplicationModel.applicant_id)
+            .filter(ApplicationModel.applicant_id.in_(candidates))
+            .distinct()
+            .all()
+        )
+        found = {r[0] for r in rows}
+        return [key for key in candidates if key in found]
 
     def get_program_codes_by_applicant(self, applicant_id: str) -> List[str]:
         """
