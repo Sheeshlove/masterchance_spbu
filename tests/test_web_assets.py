@@ -34,6 +34,42 @@ def test_preloaded_fonts_exist():
         assert (STATIC / p).is_file(), f"preload ссылается на отсутствующий {p}"
 
 
+def test_no_font_file_is_stored_twice():
+    """
+    Так уже было: Inter лежал двенадцатью файлами, из которых уникальных было
+    четыре — по три побайтово одинаковых копии на каждое подмножество, под
+    веса 400, 500 и 600. Inter вариативный, вес в нём задаётся осью, а не
+    файлом, поэтому копии были лишними. Адреса при этом разные, и браузер
+    честно скачивал один и тот же шрифт трижды: ~200 КБ вместо ~67 КБ на
+    русской странице и четыре лишних обращения к серверу.
+    """
+    import hashlib
+    from collections import defaultdict
+
+    by_digest = defaultdict(list)
+    for f in sorted((STATIC / "fonts").glob("*.woff2")):
+        by_digest[hashlib.md5(f.read_bytes()).hexdigest()].append(f.name)
+
+    dupes = {d: names for d, names in by_digest.items() if len(names) > 1}
+    assert not dupes, f"один и тот же шрифт лежит под разными именами: {dupes}"
+
+
+def test_variable_font_is_declared_once_per_subset():
+    """
+    У вариативного Inter одно объявление на подмножество с диапазоном весов.
+    Отдельная строка на каждый вес вернула бы ровно ту же лишнюю загрузку.
+    """
+    css = (STATIC / "fonts.css").read_text(encoding="utf-8")
+    inter = re.findall(r"@font-face \{[^}]*?font-family: 'Inter';[^}]*?\}", css, re.S)
+
+    assert len(inter) == 4, f"объявлений Inter должно быть 4 (по подмножествам), а их {len(inter)}"
+    for block in inter:
+        assert "font-weight: 100 900" in block, (
+            "вес вариативного шрифта задаётся диапазоном, иначе на каждое "
+            f"начертание снова поедет свой файл:\n{block}"
+        )
+
+
 def test_no_external_font_dependency():
     """Сайт открывают из России: внешний CDN в критическом пути не нужен."""
     base = (TEMPLATES / "base.html").read_text(encoding="utf-8")

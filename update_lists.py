@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import sys
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.application.use_cases.recalculate_monte_carlo import RecalculateMonteCarloUseCase
 from app.application.use_cases.update_lists import UpdateApplicationListsUseCase
 from app.config.config import settings
 from app.config.logger import logger
+from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
@@ -26,12 +26,9 @@ def main():
             run_mc = False
     logger.info("=== masterchance старт (вуз=%s, monte-carlo=%s) ===", university, run_mc)
     # 1) Настройка БД
-    engine = create_engine(
-        settings.database_url,
-        echo=settings.db_echo,
-        future=True,
-    )
+    engine = make_engine(settings.database_url, echo=settings.db_echo)
     Base.metadata.create_all(engine)
+    ensure_indexes(engine)
     Session = sessionmaker(bind=engine, future=True)
 
     # 2) Инициализация
@@ -55,6 +52,7 @@ def main():
     logger.info("=== masterchance завершён ===")
 
     if not run_mc:
+        analyze(engine)
         session.close()
         logger.info("Monte‑Carlo пропущен (--no-monte-carlo). Сессия БД закрыта.")
         print("ℹ️  Monte‑Carlo пропущен — запустите run_monte_carlo.py отдельно.")
@@ -65,6 +63,7 @@ def main():
         use_case = RecalculateMonteCarloUseCase(repo=repo, n_simulations=10_000)
         use_case.execute()
         logger.info("✅ Monte‑Carlo успешно пересчитан.")
+        analyze(engine)
     except Exception as exc:
         logger.exception("❌ Ошибка Monte‑Carlo: %s", exc)
         sys.exit(1)

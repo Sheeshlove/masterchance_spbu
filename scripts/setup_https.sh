@@ -148,6 +148,12 @@ else
     rm -f /etc/nginx/conf.d/default.conf
 fi
 
+# Каталог под кеш статики (proxy_cache_path в конфиге домена). Обычно nginx
+# заводит его сам при старте, но только если родительский каталог на месте —
+# а на голых образах /var/cache/nginx бывает и не создан.
+install -d -o www-data -g www-data -m 0700 /var/cache/nginx/masterchance 2>/dev/null \
+    || install -d -m 0700 /var/cache/nginx/masterchance
+
 nginx -t
 systemctl reload nginx
 
@@ -246,6 +252,60 @@ else
         -d "$DOMAIN" -d "www.${DOMAIN}" \
         --non-interactive --agree-tos -m "$EMAIL" \
         --redirect
+fi
+
+# ── 5. HTTP/2 ───────────────────────────────────────────────────────────────
+# TLS-блок пишет certbot, и http2 он не включает — ни один из его плагинов
+# этого не делает. Без него страница едет по HTTP/1.1, где браузер держит к
+# домену максимум шесть соединений: десяток шрифтов, стилей и скриптов встают
+# в очередь. На канале с большой задержкой (а сайт открывают из России и
+# из-за границы) это лишние сотни миллисекунд на ровном месте.
+#
+# Синтаксис зависит от версии: отдельная директива `http2 on` появилась в
+# 1.25.1, до неё параметр писался прямо в listen. На Ubuntu 24.04 приезжает
+# nginx 1.24, то есть чаще всего нужен именно старый вариант.
+say "Включаю HTTP/2"
+
+if [ -e "/etc/nginx/conf.d/${DOMAIN}.conf" ]; then
+    TLS_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
+else
+    TLS_CONF="/etc/nginx/sites-available/${DOMAIN}.conf"
+fi
+
+NGINX_VER="$(nginx -v 2>&1 | sed -nE 's#.*nginx/([0-9]+\.[0-9]+\.[0-9]+).*#\1#p')"
+
+if ! grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?443[[:space:]]+ssl' "$TLS_CONF"; then
+    note "TLS-блока в $TLS_CONF нет — пропускаю (certbot его не дописал?)"
+elif grep -qE 'http2([[:space:]]+on)?[[:space:]]*;|ssl[[:space:]]+http2' "$TLS_CONF"; then
+    note "HTTP/2 уже включён"
+else
+    HTTP2_BAK="${TLS_CONF}.bak-http2-$(date +%Y%m%d%H%M%S)"
+    cp -a "$TLS_CONF" "$HTTP2_BAK"
+
+    # version_ge A B → истина, если A не младше B
+    version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
+
+    if [ -n "$NGINX_VER" ] && version_ge "$NGINX_VER" "1.25.1"; then
+        # Директива уровня server — дописываем сразу после первого listen 443.
+        sed -i -E '0,/^([[:space:]]*)listen[[:space:]]+(\[::\]:)?443[[:space:]]+ssl.*$/s//&\n\1http2 on;/' "$TLS_CONF"
+        note "nginx $NGINX_VER — добавил директиву http2 on"
+    else
+        # Старый синтаксис: параметр listen. Ставится на обе строки, v4 и v6.
+        # У строки для IPv6 после ssl идёт ipv6only=on — его надо сохранить,
+        # поэтому «хвост до точки с запятой» вырезается отдельной группой.
+        sed -i -E 's/^([[:space:]]*listen[[:space:]]+(\[::\]:)?443[[:space:]]+ssl)([^;]*);/\1 http2\3;/' "$TLS_CONF"
+        note "nginx ${NGINX_VER:-<версия неизвестна>} — добавил http2 в listen"
+    fi
+
+    # Откатываемся молча и полностью: HTTP/2 — ускорение, а не условие работы,
+    # и ронять из-за него уже работающий https нельзя.
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+        rm -f "$HTTP2_BAK"
+    else
+        mv -f "$HTTP2_BAK" "$TLS_CONF"
+        note "nginx не принял правку — вернул как было, сайт работает по HTTP/1.1"
+    fi
 fi
 
 say "Проверяю результат"

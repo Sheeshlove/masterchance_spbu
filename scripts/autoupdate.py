@@ -30,10 +30,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.config.config import settings  # noqa: E402
+from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine  # noqa: E402
 from app.infrastructure.db.models import Base  # noqa: E402
 from app.infrastructure.db.repositories.program_repository import ProgramRepository  # noqa: E402
 
@@ -60,8 +60,9 @@ def run_once() -> None:
     from app.application.use_cases.update_lists import UpdateApplicationListsUseCase
     from build_snapshot import build
 
-    engine = create_engine(settings.database_url, echo=settings.db_echo, future=True)
+    engine = make_engine(settings.database_url, echo=settings.db_echo)
     Base.metadata.create_all(engine)
+    ensure_indexes(engine)
     session = sessionmaker(bind=engine, future=True)()
     repo = ProgramRepository(session)
 
@@ -73,6 +74,11 @@ def run_once() -> None:
 
         say("Шаг 2/4: Monte-Carlo (10 000 симуляций)…")
         RecalculateMonteCarloUseCase(repo=repo, n_simulations=10_000).execute()
+
+        # Вся база только что переписана, статистика планировщика устарела.
+        # Без ANALYZE SQLite строит планы вслепую — см. engine.analyze().
+        say("Обновляю статистику планировщика…")
+        analyze(engine)
     finally:
         session.close()
         engine.dispose()

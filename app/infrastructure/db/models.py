@@ -70,6 +70,19 @@ class ApplicationModel(Base):
     applicant = relationship('ApplicantModel')
     program = relationship('ProgramModel')
 
+    # Составной первичный ключ начинается с program_code, поэтому выборки
+    # «все заявки этого абитуриента» им не пользуются — а это самый частый
+    # запрос сайта и бота. Второй индекс покрывает справочник согласий
+    # (SELECT DISTINCT applicant_id WHERE consent IS TRUE), который строится
+    # на каждый показ прогноза.
+    #
+    # Дубль этих же индексов лежит в app/infrastructure/db/engine.py: там они
+    # досоздаются на уже работающей базе, куда create_all() ничего не добавит.
+    __table_args__ = (
+        Index('ix_applications_applicant', 'applicant_id'),
+        Index('ix_applications_consent', 'consent', 'applicant_id'),
+    )
+
 
 # ────────── Monte‑Carlo результаты ───────────────────────────────────────
 class ProgramQuantileModel(Base):
