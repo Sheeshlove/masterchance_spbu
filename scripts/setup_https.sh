@@ -152,18 +152,62 @@ nginx -t
 systemctl reload nginx
 
 # Единственная надёжная проверка: `nginx -T` печатает конфигурацию так, как её
-# видит сам nginx. Если нашего server_name там нет — файл не подключён, и идти
-# к certbot бессмысленно.
+# видит сам nginx. Если нашего server_name там нет — файл не подключён.
+nginx_sees_domain() {
+    nginx -T 2>/dev/null | grep -qE "server_name[[:space:]].*\b${DOMAIN//./\\.}\b"
+}
+
 say "Проверяю, что nginx действительно видит $DOMAIN"
-if ! nginx -T 2>/dev/null | grep -qE "server_name[[:space:]].*\b${DOMAIN//./\\.}\b"; then
+
+if ! nginx_sees_domain; then
+    # Бывает nginx.conf, который не подключает ни conf.d, ни sites-enabled, а
+    # только свой единственный файл (так делают некоторые хостинги и панели).
+    # Тогда наш конфиг лежит на диске и не читается. Дописываем conf.d —
+    # это стандартная строка, существующие include она не трогает.
+    note "конфиг не подключён — добавляю include conf.d в nginx.conf"
+    cp -a /etc/nginx/nginx.conf "/etc/nginx/nginx.conf.bak-$(date +%Y%m%d%H%M%S)"
+
+    tmp="$(mktemp)"
+    awk '
+      !done && /^[[:space:]]*include[[:space:]]+\/etc\/nginx\/mime\.types;/ {
+          print; print "    include /etc/nginx/conf.d/*.conf;   # добавлено setup_https.sh"
+          done = 1; next
+      }
+      !done && /^[[:space:]]*http[[:space:]]*\{/ {
+          print; print "    include /etc/nginx/conf.d/*.conf;   # добавлено setup_https.sh"
+          done = 1; next
+      }
+      { print }
+    ' /etc/nginx/nginx.conf > "$tmp"
+
+    grep -q 'conf.d/\*.conf' "$tmp" || fail "не удалось дописать include в nginx.conf.
+    Добавьте вручную внутрь блока http { … }:
+        include /etc/nginx/conf.d/*.conf;
+    затем: nginx -t && systemctl reload nginx"
+
+    install -m 0644 "$tmp" /etc/nginx/nginx.conf
+    rm -f "$tmp"
+    install -m 0644 "$CONF_SRC" "/etc/nginx/conf.d/${DOMAIN}.conf"
+
+    nginx -t
+    systemctl reload nginx
+fi
+
+if ! nginx_sees_domain; then
     fail "nginx не подхватил конфиг для $DOMAIN.
-    Файл на месте, но в рабочую конфигурацию он не попал. Посмотрите, что
-    подключает главный конфиг:
+    Посмотрите, что подключает главный конфиг:
         grep -n include /etc/nginx/nginx.conf
     и куда лёг наш файл:
-        ls -l /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null"
+        ls -l /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null
+    Резервная копия nginx.conf — рядом, с суффиксом .bak-*"
 fi
 note "видит"
+
+# Наш конфиг мог остаться в неиспользуемой папке от прошлого запуска: две
+# расходящиеся копии одного сайта — источник долгих недоумений.
+if [ -e "/etc/nginx/conf.d/${DOMAIN}.conf" ]; then
+    rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf" "/etc/nginx/sites-available/${DOMAIN}.conf"
+fi
 
 # ── 4. Сертификат ───────────────────────────────────────────────────────────
 # Выпуск и установка — разные шаги, и второй умеет падать отдельно от первого.

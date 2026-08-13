@@ -260,3 +260,20 @@ def test_setup_script_does_not_reissue_an_existing_certificate():
     text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
     assert "letsencrypt/live/${DOMAIN}/fullchain.pem" in text
     assert "certbot install --cert-name" in text
+
+
+def test_setup_script_can_add_the_include_itself():
+    """
+    Встречаются nginx.conf, которые не подключают ни conf.d, ни sites-enabled,
+    а только свой единственный файл. Тогда наш конфиг лежит на диске и не
+    читается — скрипт должен дописать include, а не сдаться.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "include /etc/nginx/conf.d/*.conf" in text
+    assert "nginx.conf.bak-" in text, "нет резервной копии перед правкой nginx.conf"
+
+
+def test_setup_script_removes_the_unused_copy():
+    """Две расходящиеся копии одного сайта в разных папках — источник путаницы."""
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert 'rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf"' in text
