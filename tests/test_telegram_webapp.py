@@ -219,3 +219,21 @@ def test_setup_script_keeps_renewal_working_for_the_venv_install():
     text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
     if "/opt/certbot" in text:
         assert "certbot renew" in text, "нет продления для venv-установки"
+
+
+def test_setup_script_checks_every_a_record_not_just_the_first():
+    """
+    Если рядом с нужной A-записью осталась чужая, DNS отдаёт их по очереди:
+    часть посетителей уедет на чужой сервер, а Let's Encrypt провалит проверку.
+    Скрипт обязан смотреть все адреса, а не первый попавшийся.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "sort -u" in text, "адреса не собираются целиком"
+    assert "NR==1" not in text, "берётся только первая A-запись"
+    assert "лишние A-записи" in text, "нет понятного сообщения про лишнюю запись"
+
+
+def test_setup_script_checks_the_www_record_too():
+    """Сертификат выпускается на оба имени — значит проверять надо оба."""
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert 'check_records "www.${DOMAIN}"' in text
