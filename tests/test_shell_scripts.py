@@ -64,9 +64,17 @@ def test_stops_on_first_error(path: Path):
     """
     Скрипты идут на сервере от root. Без `set -e` упавший шаг не остановит
     остальные, и разбираться придётся уже по последствиям.
+
+    Исключение возможно, но должно быть объявлено вслух: у диагностики другая
+    задача — дойти до конца и показать все проблемы разом, а не встать на
+    первой. Такой скрипт обязан объяснить это комментарием «без -e».
     """
     text = path.read_text(encoding="utf-8")
-    assert re.search(r"^set -[a-z]*e", text, re.M), f"{path.name} без set -e"
+    if re.search(r"^set -[a-z]*e", text, re.M):
+        return
+    assert re.search(r"без -e", text), (
+        f"{path.name} без set -e и без объяснения, почему так задумано"
+    )
 
 
 @pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: p.name)
