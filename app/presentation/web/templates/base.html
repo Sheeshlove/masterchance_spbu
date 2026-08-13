@@ -6,16 +6,16 @@
   <title>{% block title %}MasterChance — посмотри свои шансы{% endblock %}</title>
   <meta name="theme-color" content="#FBFAF7">
   <link rel="preload" as="font" type="font/woff2" crossorigin
-        href="{{ url_for('static', path='fonts/Inter-400-cyrillic.woff2') }}">
+        href="/static/fonts/Inter-400-cyrillic.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin
-        href="{{ url_for('static', path='fonts/PoiretOne-400-cyrillic.woff2') }}">
-  <link rel="stylesheet" href="{{ url_for('static', path='fonts.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+        href="/static/fonts/PoiretOne-400-cyrillic.woff2">
+  <link rel="stylesheet" href="/static/fonts.css">
+  <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <!-- SDK Telegram обязан грузиться с telegram.org: со своей копией Mini App
        не заработает. Снаружи Telegram скрипт безвреден. -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="{{ url_for('static', path='telegram.js') }}" defer></script>
+  <script src="/static/telegram.js" defer></script>
 </head>
 <body>
   <header class="topbar">

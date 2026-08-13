@@ -27,7 +27,7 @@ def test_every_font_face_points_at_a_real_file():
 def test_preloaded_fonts_exist():
     """<link rel=preload> на несуществующий файл — впустую потраченный запрос."""
     base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
-    preloads = re.findall(r"path='(fonts/[^']+)'", base)
+    preloads = re.findall(r'href="/static/(fonts/[^"]+)"', base)
 
     assert preloads, "критические шрифты больше не преложены"
     for p in preloads:
@@ -52,3 +52,40 @@ def test_stylesheet_has_no_leftover_dark_palette():
     css = (STATIC / "styles.css").read_text(encoding="utf-8")
     for stale in ("#0f1115", "#181b22", "#20242d", "#5b8cff"):
         assert stale not in css, f"остался цвет тёмной темы {stale}"
+
+
+def test_pages_never_link_static_over_plain_http(web_client):
+    """
+    Сайт живёт за nginx по https. Если ссылка на стиль абсолютная и с http://,
+    браузер и особенно webview Telegram блокируют её как mixed content —
+    страница остаётся без оформления. `url_for` в Starlette даёт именно такой
+    абсолютный адрес, подставляя схему из запроса, а за прокси она http.
+    """
+    import re
+
+    for url in ("/", "/how", "/mechanism"):
+        html = web_client.get(url).text
+        local = re.findall(r'(?:href|src)="(http://[^"]+)"', html)
+        assert not local, f"{url}: ссылки по http на https-странице: {local}"
+
+
+def test_static_links_are_root_relative(web_client):
+    """Относительный адрес не имеет схемы — испортить его прокси не может."""
+    import re
+
+    html = web_client.get("/").text
+    refs = re.findall(r'(?:href|src)="([^"]*\/static\/[^"]*)"', html)
+    assert refs, "на странице нет ссылок на статику"
+    for ref in refs:
+        assert ref.startswith("/static/"), f"не относительная ссылка: {ref}"
+
+
+def test_app_is_started_behind_a_proxy():
+    """
+    uvicorn по умолчанию доверяет X-Forwarded-* только с 127.0.0.1, а nginx
+    приходит в контейнер с адреса docker-шлюза. Без этого схема остаётся http
+    и ломаются любые абсолютные ссылки и редиректы.
+    """
+    web = Path("web.py").read_text(encoding="utf-8")
+    assert "proxy_headers=True" in web
+    assert 'forwarded_allow_ips="*"' in web
