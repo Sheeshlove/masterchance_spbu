@@ -237,3 +237,26 @@ def test_setup_script_checks_the_www_record_too():
     """Сертификат выпускается на оба имени — значит проверять надо оба."""
     text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
     assert 'check_records "www.${DOMAIN}"' in text
+
+
+def test_setup_script_verifies_nginx_loaded_the_config():
+    """
+    Конфиг может лежать в правильной папке и не подключаться: у одних сборок
+    nginx.conf читает sites-enabled, у других только conf.d. `nginx -t` в
+    обоих случаях проходит — файл просто не парсится, — а certbot потом не
+    находит server block. Проверять надо `nginx -T`, то есть итоговую
+    конфигурацию.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "nginx -T" in text, "нет проверки итоговой конфигурации"
+    assert "sites-enabled" in text and "conf.d" in text, "выбран только один путь"
+
+
+def test_setup_script_does_not_reissue_an_existing_certificate():
+    """
+    У Let's Encrypt есть лимит на число выпусков для домена. Если сертификат
+    уже есть, а не установился — его надо доустановить, а не выпускать снова.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "letsencrypt/live/${DOMAIN}/fullchain.pem" in text
+    assert "certbot install --cert-name" in text

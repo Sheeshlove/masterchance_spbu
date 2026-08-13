@@ -128,20 +128,61 @@ say "Проверяю certbot"
 install_certbot
 
 say "Включаю конфиг для $DOMAIN"
-install -m 0644 "$CONF_SRC" "/etc/nginx/sites-available/${DOMAIN}.conf"
-ln -sfn "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
-# дефолтный сайт перехватывает все запросы без server_name — он тут мешает
-rm -f /etc/nginx/sites-enabled/default
+
+# Куда класть конфиг, зависит от сборки nginx: у одних nginx.conf подключает
+# sites-enabled, у других — только conf.d. Положить не туда особенно коварно:
+# `nginx -t` пройдёт (файл просто не читается), сайт вроде работает, а certbot
+# потом скажет «не нашёл server block» — потому что и правда не нашёл.
+if grep -qE '^[[:space:]]*include[[:space:]]+/etc/nginx/sites-enabled/' /etc/nginx/nginx.conf; then
+    install -d /etc/nginx/sites-available /etc/nginx/sites-enabled
+    install -m 0644 "$CONF_SRC" "/etc/nginx/sites-available/${DOMAIN}.conf"
+    ln -sfn "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
+    note "через sites-enabled"
+    # дефолтный сайт перехватывает всё без server_name — он тут мешает
+    rm -f /etc/nginx/sites-enabled/default
+else
+    install -d /etc/nginx/conf.d
+    install -m 0644 "$CONF_SRC" "/etc/nginx/conf.d/${DOMAIN}.conf"
+    note "через conf.d (sites-enabled этот nginx не подключает)"
+    rm -f /etc/nginx/conf.d/default.conf
+fi
 
 nginx -t
 systemctl reload nginx
 
+# Единственная надёжная проверка: `nginx -T` печатает конфигурацию так, как её
+# видит сам nginx. Если нашего server_name там нет — файл не подключён, и идти
+# к certbot бессмысленно.
+say "Проверяю, что nginx действительно видит $DOMAIN"
+if ! nginx -T 2>/dev/null | grep -qE "server_name[[:space:]].*\b${DOMAIN//./\\.}\b"; then
+    fail "nginx не подхватил конфиг для $DOMAIN.
+    Файл на месте, но в рабочую конфигурацию он не попал. Посмотрите, что
+    подключает главный конфиг:
+        grep -n include /etc/nginx/nginx.conf
+    и куда лёг наш файл:
+        ls -l /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null"
+fi
+note "видит"
+
 # ── 4. Сертификат ───────────────────────────────────────────────────────────
-say "Выпускаю сертификат Let's Encrypt"
-certbot --nginx \
-    -d "$DOMAIN" -d "www.${DOMAIN}" \
-    --non-interactive --agree-tos -m "$EMAIL" \
-    --redirect
+# Выпуск и установка — разные шаги, и второй умеет падать отдельно от первого.
+# Если сертификат уже выпущен (прошлый запуск дошёл до него, а установка не
+# удалась), повторный выпуск не нужен и вреден: у Let's Encrypt есть лимит на
+# число выпусков для домена. Доустанавливаем уже имеющийся.
+if [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
+    say "Сертификат уже выпущен — устанавливаю его в nginx"
+    certbot install --cert-name "$DOMAIN" --nginx --non-interactive
+    # --redirect у `install` нет; поворот на https включаем отдельно
+    certbot --nginx -d "$DOMAIN" -d "www.${DOMAIN}" \
+        --non-interactive --agree-tos -m "$EMAIL" \
+        --keep-until-expiring --redirect
+else
+    say "Выпускаю сертификат Let's Encrypt"
+    certbot --nginx \
+        -d "$DOMAIN" -d "www.${DOMAIN}" \
+        --non-interactive --agree-tos -m "$EMAIL" \
+        --redirect
+fi
 
 say "Проверяю результат"
 code="$(curl -s -o /dev/null -w '%{http_code}' "https://${DOMAIN}/healthz")"
