@@ -84,6 +84,12 @@ def build(source: Path, out: Path) -> None:
                     "admission_probabilities пуста — снапшот бесполезен. "
                     "Запустите run_monte_carlo.py."
                 )
+            # Рабочая база живёт в WAL (см. app/infrastructure/db/engine.py), и
+            # backup() переносит этот режим в копию. Снапшоту он не нужен и
+            # вреден: клиент его только читает, а рядом с файлом появлялись бы
+            # -wal и -shm, без которых скопированная база уже неполна. Возвращаем
+            # обычный журнал — так снапшот остаётся одним самодостаточным файлом.
+            con.execute("PRAGMA journal_mode=DELETE")
             con.execute("VACUUM")
         finally:
             con.close()

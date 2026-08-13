@@ -98,3 +98,28 @@ def test_source_database_is_not_modified(tmp_path):
     build(source, tmp_path / "snap.db.gz")
 
     assert source.read_bytes() == before
+
+
+def test_snapshot_is_a_single_self_contained_file(tmp_path):
+    """
+    Рабочая база переведена в WAL, а backup() переносит режим в копию. Для
+    снапшота это вредно: клиент его только читает, а рядом с файлом появлялись
+    бы -wal и -shm, без которых скопированная база уже неполна.
+    """
+    source = tmp_path / "master.db"
+    _make_db(source)
+    con = sqlite3.connect(source)
+    con.execute("PRAGMA journal_mode=WAL")   # как в бою
+    con.close()
+
+    out = tmp_path / "snap.db.gz"
+    build(source, out)
+
+    restored = tmp_path / "restored.db"
+    with gzip.open(out, "rb") as src, open(restored, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+
+    con = sqlite3.connect(restored)
+    mode = con.execute("PRAGMA journal_mode").fetchone()[0]
+    con.close()
+    assert mode.lower() != "wal", "снапшот уехал клиенту в режиме WAL"
