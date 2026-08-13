@@ -132,10 +132,13 @@ else
                -w '%{http_code} %{size_download} %{content_type}' \
                "https://${DOMAIN}${asset}" 2>/dev/null)"
         set -- $hdr
-        if [ "${1:-000}" = "200" ]; then
-            ok "$asset → 200, ${2} байт"
-        else
+        if [ "${1:-000}" != "200" ]; then
             bad "$asset → ${1:-нет ответа}"
+        elif [ "$asset" = "/static/styles.css" ] && [ "${3#text/css}" = "${3:-}" ]; then
+            # браузер не применит стиль, отданный не как text/css
+            bad "$asset отдан как «${3:-неизвестно}», а не text/css"
+        else
+            ok "$asset → 200, ${2} байт, ${3:-?}"
         fi
     done
 fi
