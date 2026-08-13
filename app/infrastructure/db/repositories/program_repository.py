@@ -1,6 +1,6 @@
 # repositories/program_repository.py
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence
 
 from sqlalchemy import delete
 from sqlalchemy import func
@@ -18,9 +18,6 @@ from app.infrastructure.db.models import (
     SubmissionStatsModel, ApplicantModel, ApplicationModel, ProgramQuantileModel, AdmissionProbabilityModel,
     AdmissionDiagnosticsModel, ExamSessionModel
 )
-
-if TYPE_CHECKING:  # pandas нужен только для Monte-Carlo (get_program_meta_df),
-    import pandas as pd  # поэтому импортируется лениво — бот/сайт/десктоп его не тянут
 
 
 class ProgramRepository:
@@ -398,7 +395,7 @@ class ProgramRepository:
         Считается по тем же данным, что скармливаются Монте-Карло, чтобы
         объяснение не разошлось с числом: соперник «без согласия» здесь — это
         ровно тот, кого модель кладёт в пул оттока (нет согласия ни по одной
-        заявке), а «известный балл» — total_score > 0, как и при импутации.
+        заявке), а «известный балл» — total_score > 0, как и в самой модели.
         """
         codes = list(codes)
         if not codes:
@@ -521,27 +518,6 @@ class ProgramRepository:
         )
         self._session.execute(upsert_stmt)
 
-    def get_program_meta_df(self, university: str | None = None) -> "pd.DataFrame":
-        """
-        Вернуть DataFrame:
-            program_code | department_code | is_international
-        Используется Monte‑Carlo для построения exam_id.
-        Если задан university — только программы этого вуза.
-        """
-        import pandas as pd  # локальный импорт: тяжёлая зависимость только для MC
-
-        q = self._session.query(
-            ProgramModel.code,
-            ProgramModel.department_code,
-            ProgramModel.is_international,
-        )
-        if university is not None:
-            q = q.filter(ProgramModel.university == university)
-        rows = q.all()
-        return pd.DataFrame(
-            rows, columns=["program_code", "department_code", "is_international"]
-        )
-
     def get_latest_submission_generated_at(self) -> datetime | None:
         """
         Максимальная дата generated_at по всем программам (submission_stats).
@@ -613,26 +589,6 @@ class ProgramRepository:
         if len(q_like) == 1:
             return q_like[0][0]
         return None
-
-    def get_all_exam_sessions(self) -> list[ExamSession]:
-        rows = (
-            self._session.query(ExamSessionModel)
-            .order_by(ExamSessionModel.program_code.asc(), ExamSessionModel.dt.asc())
-            .all()
-        )
-        out: list[ExamSession] = []
-        for r in rows:
-            out.append(ExamSession(
-                program_code=r.program_code,
-                exam_code=r.exam_code,
-                dt=r.dt,
-                institute=r.institute,
-                education_form=r.education_form,
-                contract=r.contract,
-                program_name=r.program_name,
-                program_pdf_url=r.program_pdf_url,
-            ))
-        return out
 
     def get_applications_by_applicant(self, applicant_id: str) -> list[Application]:
         """

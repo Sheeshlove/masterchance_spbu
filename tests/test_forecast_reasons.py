@@ -84,8 +84,31 @@ def test_applicant_without_score_has_no_rank(seed, forecast):
     item = forecast.execute("A1").items[0]
     assert item.competition.my_total_score is None
     assert item.competition.better == 0
-    assert "разыгрывает его" in texts(item)
+    assert "идёте с нулём" in texts(item)
+    assert ReasonKind.BAD in kinds(item)
     assert "-й из" not in texts(item)
+
+
+def test_rivals_without_scores_cannot_overtake(seed, forecast):
+    """
+    Списки окончательные: соперник с нулём — это плюс, а не минус. Пока
+    модель разыгрывала недостающие баллы, он «обходил» в части сценариев.
+    """
+    seed.program("701")
+    seed.applicant("A1")
+    seed.application("701", "A1", total_score=200)
+    for i in range(3):
+        seed.applicant(f"Z{i}")
+        seed.application("701", f"Z{i}")     # баллов нет
+    seed.probability("A1", "701", 0.9)
+    seed.stats("701", num_places=2)
+    seed.commit()
+
+    item = forecast.execute("A1").items[0]
+    assert item.competition.unscored_rivals == 3
+    reason = next(r for r in item.reasons if "без баллов" in r.text)
+    assert reason.kind is ReasonKind.GOOD
+    assert "обойти вас уже не могут" in reason.text
 
 
 def test_rivals_without_consent_matches_monte_carlo_pool(seed, forecast):
