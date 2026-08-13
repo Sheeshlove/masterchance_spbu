@@ -102,6 +102,16 @@ for url in "http://${DOMAIN}/healthz" "https://${DOMAIN}/healthz"; do
     esac
 done
 
+# www должен вести на канонический адрес, а не открывать копию сайта
+target="$(curl -s -o /dev/null --max-time 10 -w '%{redirect_url}' "https://www.${DOMAIN}/" 2>/dev/null)"
+case "$target" in
+    "https://${DOMAIN}/"*) ok "www → $target" ;;
+    "")                    bad "https://www.${DOMAIN}/ не переадресует на ${DOMAIN}"
+                           note "сайт открывается по двум адресам сразу"
+                           note "sudo bash scripts/setup_https.sh" ;;
+    *)                     bad "www ведёт на неожиданный адрес: $target" ;;
+esac
+
 # ── 5a. Статика: доезжают ли стили ──────────────────────────────────────────
 say "Оформление"
 page="$(curl -s --max-time 15 "https://${DOMAIN}/" 2>/dev/null)"

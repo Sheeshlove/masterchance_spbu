@@ -338,3 +338,25 @@ def test_diagnostic_checks_which_markup_is_deployed():
     text = Path("scripts/diagnose_server.sh").read_text(encoding="utf-8")
     assert 'href="/static/styles.css"' in text
     assert "не пересобран" in text
+
+
+def test_www_redirects_to_the_canonical_host():
+    """Один сайт по двум адресам — на это ругаются проверки и поисковики."""
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    assert f"if ($host = www.{DOMAIN})" in text
+    assert f"return 301 https://{DOMAIN}$request_uri;" in text
+
+
+def test_www_redirect_cannot_break_certificate_renewal():
+    """
+    Серверный `if` перехватил бы и /.well-known/acme-challenge/, по которому
+    Let's Encrypt подтверждает домен www при каждом продлении. Редирект обязан
+    жить внутри location /, где своя локация certbot имеет приоритет выше.
+    """
+    import re
+
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    # на уровне server (отступ 4) никаких if быть не должно
+    assert not re.search(r"^\s{4}if \(", text, re.M), "if на уровне server"
+    body = re.search(r"location / \{(.*?)\n    \}", text, re.S).group(1)
+    assert "return 301" in body, "редирект не внутри location /"
