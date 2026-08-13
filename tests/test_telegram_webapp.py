@@ -330,6 +330,68 @@ def test_nginx_caches_static_but_not_forever():
     assert "location /static/" in text and "expires 1h" in text
 
 
+def test_nginx_serves_static_from_its_own_cache():
+    """
+    Ни одной директивы root здесь нет — вся статика уходит в python через
+    proxy_pass. То есть восемь запросов на холодную загрузку конкурируют за
+    единственный воркер uvicorn с самой отрисовкой страниц. Кеш nginx снимает
+    это, не заводя копию файлов на диске (репозиторий лежит в домашнем
+    каталоге root, куда www-data не заглянет).
+    """
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+
+    assert "proxy_cache_path" in text, "зона кеша не объявлена"
+    # Директива уровня http: внутри server nginx её не примет.
+    before_server = text.split("server {", 1)[0]
+    assert "proxy_cache_path" in before_server, "proxy_cache_path оказался внутри server"
+
+    assert text.count("proxy_cache mc_static;") >= 2, "кеш включён не для всей статики"
+    assert "proxy_cache_use_stale" in text, (
+        "без use_stale занятый python превращается в 502 вместо отдачи из кеша"
+    )
+
+
+def test_nginx_keeps_the_connection_to_the_app_alive():
+    """
+    По умолчанию nginx ходит к апстриму по HTTP/1.0 и закрывает соединение
+    после каждого файла. Шрифтов несколько — это лишние установки соединения.
+    """
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    fonts_block = re.search(r"location ~\* \^/static/fonts.*?\n    \}", text, re.S)
+    assert fonts_block, "блок шрифтов не найден"
+    assert "proxy_http_version 1.1;" in fonts_block.group(0)
+
+
+def test_setup_script_turns_on_http2():
+    """
+    TLS-блок пишет certbot, и http2 он не включает никогда. Без него страница
+    едет по HTTP/1.1, где браузер держит к домену максимум шесть соединений, —
+    на канале с большой задержкой это лишние сотни миллисекунд.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+
+    assert "http2" in text, "HTTP/2 нигде не включается"
+    # Синтаксис разный до и после nginx 1.25.1, а на Ubuntu 24.04 приезжает
+    # 1.24 — то есть нужен именно старый вариант, и одного мало.
+    assert "http2 on;" in text, "нет варианта для nginx ≥ 1.25.1"
+    assert "1.25.1" in text, "версия не проверяется — на nginx 1.24 конфиг не соберётся"
+
+    # Включается после выпуска сертификата: до него TLS-блока ещё нет.
+    assert text.index("certbot --nginx") < text.index('say "Включаю HTTP/2"')
+
+
+def test_http2_never_breaks_a_working_site():
+    """
+    HTTP/2 — ускорение, а не условие работы. Если nginx правку не принял,
+    сайт должен остаться на HTTP/1.1, а не лечь.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    block = text.split('say "Включаю HTTP/2"', 1)[1]
+
+    assert "nginx -t" in block, "правка применяется без проверки конфигурации"
+    assert 'mv -f "$HTTP2_BAK"' in block, "нет отката к рабочему конфигу"
+
+
 def test_diagnostic_checks_which_markup_is_deployed():
     """
     «Дизайн не подтягивается» чаще всего значит, что контейнер не пересобран
