@@ -57,7 +57,58 @@ echo "    отвечает"
 say "Ставлю nginx и certbot"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nginx certbot python3-certbot-nginx
+apt-get install -y -qq nginx
+
+# certbot из apt тянет зависимости в системный Python, а там нередко уже лежит
+# pip-овый urllib3 2.x. Он перекрывает системный urllib3 1.x, и старый certbot
+# падает на `ImportError: cannot import name 'appengine'` ещё до первой строчки
+# работы. Поэтому ставим его в изоляции: сначала snap (он несёт свой Python и
+# сам продлевает сертификат), при отсутствии snap — отдельное venv.
+install_certbot() {
+    if certbot --version >/dev/null 2>&1; then
+        echo "    certbot уже работает: $(certbot --version 2>&1)"
+        return
+    fi
+
+    if command -v certbot >/dev/null 2>&1; then
+        echo "    системный certbot сломан (конфликт зависимостей) — переставляю"
+        apt-get remove -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
+        hash -r
+    fi
+
+    if command -v snap >/dev/null 2>&1 || apt-get install -y -qq snapd >/dev/null 2>&1; then
+        if snap install --classic certbot >/dev/null 2>&1; then
+            ln -sf /snap/bin/certbot /usr/bin/certbot
+            hash -r
+            if certbot --version >/dev/null 2>&1; then
+                echo "    certbot поставлен через snap: $(certbot --version 2>&1)"
+                return
+            fi
+        fi
+        echo "    snap не сработал — ставлю certbot в отдельное окружение"
+    fi
+
+    # venv: свой Python, свои зависимости, системного не касается
+    apt-get install -y -qq python3-venv
+    rm -rf /opt/certbot
+    python3 -m venv /opt/certbot
+    /opt/certbot/bin/pip install --quiet --upgrade pip
+    /opt/certbot/bin/pip install --quiet certbot certbot-nginx
+    ln -sf /opt/certbot/bin/certbot /usr/bin/certbot
+    hash -r
+    certbot --version >/dev/null 2>&1 || fail "не удалось поставить certbot"
+    echo "    certbot поставлен в /opt/certbot: $(certbot --version 2>&1)"
+
+    # snap и apt заводят продление сами, venv — нет
+    cat > /etc/cron.d/certbot-renew <<'CRON'
+# Продление сертификата Let's Encrypt (certbot в /opt/certbot)
+0 3,15 * * * root /usr/bin/certbot renew --quiet --nginx
+CRON
+    echo "    продление добавлено в /etc/cron.d/certbot-renew"
+}
+
+say "Проверяю certbot"
+install_certbot
 
 say "Включаю конфиг для $DOMAIN"
 install -m 0644 "$CONF_SRC" "/etc/nginx/sites-available/${DOMAIN}.conf"

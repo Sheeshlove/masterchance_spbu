@@ -201,3 +201,21 @@ def test_setup_script_checks_dns_before_certbot():
 def test_docs_and_example_use_the_same_domain():
     for path in (".env.example", "СЕРВЕР.md"):
         assert DOMAIN in Path(path).read_text(encoding="utf-8"), f"{path} не знает домена"
+
+
+def test_setup_script_verifies_certbot_before_using_it():
+    """
+    apt-овый certbot ломается, если в системном Python уже стоит pip-овый
+    urllib3 2.x: `ImportError: cannot import name 'appengine'`. Скрипт обязан
+    проверить, что certbot вообще запускается, и переставить его в изоляции.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "certbot --version" in text, "certbot используется без проверки"
+    assert "snap install --classic certbot" in text or "/opt/certbot" in text
+
+
+def test_setup_script_keeps_renewal_working_for_the_venv_install():
+    """snap и apt продлевают сертификат сами, отдельное venv — нет."""
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    if "/opt/certbot" in text:
+        assert "certbot renew" in text, "нет продления для venv-установки"
