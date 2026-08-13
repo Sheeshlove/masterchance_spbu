@@ -12,6 +12,16 @@
 #
 # Данные считает ТОЛЬКО updater. bot и web их лишь показывают, поэтому
 # перезапускать их можно в любой момент без потери чего-либо.
+
+# Docker по умолчанию не ротирует логи вообще: json-файл контейнера растёт,
+# пока не кончится диск, а обновлятор пишет каждые 3 часа годами. Ограничение
+# применяется при пересоздании контейнера (docker compose up -d).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   updater:
     build: .
@@ -26,6 +36,7 @@ services:
       - ./data:/app/data
       - ./dist:/app/dist      # сюда кладётся снапшот перед публикацией
     restart: unless-stopped
+    logging: *logging
 
   web:
     build: .
@@ -45,6 +56,7 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+    logging: *logging
 
   bot:
     build: .
@@ -58,3 +70,4 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+    logging: *logging

@@ -130,3 +130,56 @@ def test_makefile_matches_the_guide():
     mk = Path("Makefile").read_text(encoding="utf-8")
     assert "docker compose up -d --build updater" in mk
     assert "docker run -d --name masterchance-updater" not in mk
+
+
+# ── уборка диска ─────────────────────────────────────────────────────────────
+
+def test_logs_are_capped_for_every_service(compose):
+    """
+    Без ограничения json-лог контейнера растёт, пока не кончится диск:
+    Docker не ротирует его сам. Это главная причина «сервер забился».
+    """
+    for name, svc in compose["services"].items():
+        opts = svc.get("logging", {}).get("options", {})
+        assert opts.get("max-size"), f"у {name} не ограничен размер лога"
+        assert opts.get("max-file"), f"у {name} не ограничено число файлов лога"
+
+
+def test_cleanup_script_is_executable_and_valid():
+    script = Path("scripts/cleanup.sh")
+    assert script.is_file()
+    assert script.stat().st_mode & 0o111, "скрипт не исполняемый"
+    import subprocess
+    done = subprocess.run(["bash", "-n", str(script)], capture_output=True)
+    assert done.returncode == 0, done.stderr.decode()
+
+
+def test_cleanup_never_touches_data_or_volumes():
+    """
+    Уборка не должна уносить базу. `prune --volumes` — привычка опасная даже
+    там, где томов нет, поэтому её в скрипте быть не должно.
+
+    Смотрим только исполняемые строки: в шапке эти команды упомянуты как раз
+    затем, чтобы объяснить, почему их здесь нет.
+    """
+    text = Path("scripts/cleanup.sh").read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+    assert "--volumes" not in code
+    assert "docker volume prune" not in code
+    assert "rm -rf" not in code
+    for protected in ("data/", "dist/"):
+        assert protected in text, f"в скрипте не сказано, что {protected} не трогается"
+
+
+def test_cleanup_survives_a_stopped_docker_daemon():
+    """При недоступном демоне скрипт обязан пропустить свою докерную часть."""
+    text = Path("scripts/cleanup.sh").read_text(encoding="utf-8")
+    assert "docker info" in text, "наличие бинарника ещё не значит, что демон жив"
+
+
+def test_guide_documents_the_cleanup(guide):
+    assert "scripts/cleanup.sh" in guide
+    assert "--deep" in guide

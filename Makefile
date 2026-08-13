@@ -78,6 +78,12 @@ autoupdate-logs: ## Follow the updater log
 autoupdate-stop: ## Stop everything started by compose
 	docker compose down
 
+cleanup: ## Free disk space on the server (old images, build cache, logs)
+	sudo bash scripts/cleanup.sh
+
+cleanup-deep: ## Same, plus every image not used by a running container
+	sudo bash scripts/cleanup.sh --deep
+
 exe: ## Build MasterChance.exe (Windows only; CI does this on windows-latest)
 	pyinstaller packaging/masterchance.spec
 
