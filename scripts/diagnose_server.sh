@@ -102,6 +102,44 @@ for url in "http://${DOMAIN}/healthz" "https://${DOMAIN}/healthz"; do
     esac
 done
 
+# ── 5a. Статика: доезжают ли стили ──────────────────────────────────────────
+say "Оформление"
+page="$(curl -s --max-time 15 "https://${DOMAIN}/" 2>/dev/null)"
+if [ -z "$page" ]; then
+    bad "главная страница не отдалась — проверить нечего"
+else
+    # Какая версия разметки реально отдаётся сервером
+    if printf '%s' "$page" | grep -q 'href="/static/styles.css"'; then
+        ok "ссылка на стили относительная (свежая версия)"
+    elif printf '%s' "$page" | grep -q 'styles.css'; then
+        link="$(printf '%s' "$page" | grep -o '[^"]*styles\.css' | head -1)"
+        bad "ссылка на стили: ${link}"
+        note "это старая версия страницы — контейнер не пересобран"
+        note "docker compose up -d --build web"
+    else
+        bad "на странице вообще нет ссылки на styles.css"
+    fi
+
+    if printf '%s' "$page" | grep -q 'telegram-web-app.js" defer'; then
+        ok "SDK Telegram не блокирует отрисовку"
+    elif printf '%s' "$page" | grep -q 'telegram-web-app.js'; then
+        bad "SDK Telegram подключён без defer — страница ждёт telegram.org"
+        note "старая версия; пересоберите: docker compose up -d --build web"
+    fi
+
+    for asset in /static/styles.css /static/htmx.min.js /static/fonts.css; do
+        hdr="$(curl -s -o /dev/null --max-time 15 \
+               -w '%{http_code} %{size_download} %{content_type}' \
+               "https://${DOMAIN}${asset}" 2>/dev/null)"
+        set -- $hdr
+        if [ "${1:-000}" = "200" ]; then
+            ok "$asset → 200, ${2} байт"
+        else
+            bad "$asset → ${1:-нет ответа}"
+        fi
+    done
+fi
+
 # ── 6. Место на диске ───────────────────────────────────────────────────────
 say "Диск"
 use="$(df -P / | awk 'NR==2{print $5}' | tr -d '%')"

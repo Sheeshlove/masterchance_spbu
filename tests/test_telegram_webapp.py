@@ -290,3 +290,30 @@ def test_setup_script_does_not_confuse_a_failed_check_with_a_missing_domain():
     assert "DUMP_OK" in text, "нет различия между «не проверили» и «не нашли»"
     # проверка больше не обрывает работу
     assert "fail \"nginx не подхватил конфиг" not in text
+
+
+def test_nginx_compresses_text_assets():
+    """htmx — 48 КБ; без сжатия это заметно на мобильной сети."""
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    assert "gzip on;" in text
+    assert "application/javascript" in text
+
+
+def test_nginx_caches_static_but_not_forever():
+    """
+    Шрифты неизменны — их можно кешировать надолго. Стили меняются при
+    обновлении проекта, поэтому им короткий кеш: иначе правка не доедет.
+    """
+    text = Path(f"deploy/nginx/{DOMAIN}.conf").read_text(encoding="utf-8")
+    assert "woff2" in text and "expires 30d" in text
+    assert "location /static/" in text and "expires 1h" in text
+
+
+def test_diagnostic_checks_which_markup_is_deployed():
+    """
+    «Дизайн не подтягивается» чаще всего значит, что контейнер не пересобран
+    и отдаёт старую разметку. Диагностика должна отличать это от поломки.
+    """
+    text = Path("scripts/diagnose_server.sh").read_text(encoding="utf-8")
+    assert 'href="/static/styles.css"' in text
+    assert "не пересобран" in text
