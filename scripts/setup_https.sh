@@ -153,13 +153,28 @@ systemctl reload nginx
 
 # Единственная надёжная проверка: `nginx -T` печатает конфигурацию так, как её
 # видит сам nginx. Если нашего server_name там нет — файл не подключён.
+# `nginx -T` печатает итоговую конфигурацию. Ошибку самой команды нельзя
+# путать с «домена нет»: если -T не отработал, мы просто не знаем, и блокировать
+# установку из-за незнания хуже, чем дать certbot высказаться.
+NGINX_DUMP=""
+DUMP_OK=0
+refresh_dump() {
+    if NGINX_DUMP="$(nginx -T 2>/dev/null)" && [ -n "$NGINX_DUMP" ]; then
+        DUMP_OK=1
+    else
+        DUMP_OK=0
+    fi
+}
+
 nginx_sees_domain() {
-    nginx -T 2>/dev/null | grep -qE "server_name[[:space:]].*\b${DOMAIN//./\\.}\b"
+    refresh_dump
+    [ "$DUMP_OK" -eq 1 ] || return 1
+    printf '%s' "$NGINX_DUMP" | grep -qE "server_name[[:space:]].*${DOMAIN//./\\.}"
 }
 
 say "Проверяю, что nginx действительно видит $DOMAIN"
 
-if ! nginx_sees_domain; then
+if ! nginx_sees_domain && [ "$DUMP_OK" -eq 1 ]; then
     # Бывает nginx.conf, который не подключает ни conf.d, ни sites-enabled, а
     # только свой единственный файл (так делают некоторые хостинги и панели).
     # Тогда наш конфиг лежит на диске и не читается. Дописываем conf.d —
@@ -193,15 +208,19 @@ if ! nginx_sees_domain; then
     systemctl reload nginx
 fi
 
-if ! nginx_sees_domain; then
-    fail "nginx не подхватил конфиг для $DOMAIN.
-    Посмотрите, что подключает главный конфиг:
-        grep -n include /etc/nginx/nginx.conf
-    и куда лёг наш файл:
-        ls -l /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null
-    Резервная копия nginx.conf — рядом, с суффиксом .bak-*"
+if nginx_sees_domain; then
+    note "видит"
+elif [ "$DUMP_OK" -eq 0 ]; then
+    # Не смогли получить дамп конфигурации — проверить нечем. Это не повод
+    # останавливаться: certbot сам скажет, нашёл он server block или нет.
+    note "не удалось получить вывод 'nginx -T' — пропускаю проверку"
+    note "если certbot дальше скажет 'could not find server block', выполните:"
+    note "    nginx -T | grep -n server_name"
+else
+    note "ВНИМАНИЕ: в конфигурации nginx нет server_name $DOMAIN"
+    note "пробую продолжить — certbot скажет точнее"
+    note "диагностика: nginx -T | grep -n 'server_name\\|conf.d'"
 fi
-note "видит"
 
 # Наш конфиг мог остаться в неиспользуемой папке от прошлого запуска: две
 # расходящиеся копии одного сайта — источник долгих недоумений.

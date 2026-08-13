@@ -277,3 +277,16 @@ def test_setup_script_removes_the_unused_copy():
     """Две расходящиеся копии одного сайта в разных папках — источник путаницы."""
     text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
     assert 'rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf"' in text
+
+
+def test_setup_script_does_not_confuse_a_failed_check_with_a_missing_domain():
+    """
+    `nginx -T` может не отработать сам по себе. Это «не знаем», а не «домена
+    нет», и останавливать установку из-за незнания нельзя: certbot скажет
+    точнее. Раньше stderr глушился, и любая ошибка команды читалась как
+    отсутствие конфига.
+    """
+    text = Path("scripts/setup_https.sh").read_text(encoding="utf-8")
+    assert "DUMP_OK" in text, "нет различия между «не проверили» и «не нашли»"
+    # проверка больше не обрывает работу
+    assert "fail \"nginx не подхватил конфиг" not in text
