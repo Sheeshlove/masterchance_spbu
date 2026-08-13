@@ -115,8 +115,29 @@ def test_button_points_at_the_configured_url(bot_module, monkeypatch):
 
 def test_sdk_is_loaded_from_telegram_org():
     """Со своей копией SDK Mini App не работает — источник обязан быть telegram.org."""
-    base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
-    assert "https://telegram.org/js/telegram-web-app.js" in base
+    js = (STATIC / "telegram.js").read_text(encoding="utf-8")
+    assert "https://telegram.org/js/telegram-web-app.js" in js
+
+
+def test_page_itself_never_requests_telegram_org(web_client):
+    """
+    telegram.org в России недоступен, и запрос к нему не отклоняется, а висит.
+    Тегом <script> он раньше стоял у всех: страница рисовалась, но событие
+    load не наступало — у людей вечно крутился индикатор, а измерялки
+    скорости показывали ноль. Теперь SDK подтягивается из telegram.js и
+    только внутри Telegram.
+    """
+    for url in ("/", "/how", "/mechanism"):
+        assert "telegram.org" not in web_client.get(url).text, url
+
+
+def test_sdk_is_requested_only_inside_telegram():
+    """Признак Telegram — параметры tgWebApp… в адресе, запомненные на сессию."""
+    js = (STATIC / "telegram.js").read_text(encoding="utf-8")
+    assert "tgWebApp" in js
+    assert "sessionStorage" in js
+    # выход до обращения к сети
+    assert js.index("insideTelegram()) return") < js.index("appendChild")
 
 
 def test_script_bails_out_outside_telegram():
@@ -147,7 +168,7 @@ def test_ios_zoom_guard_on_input():
 def test_page_still_renders_without_telegram(web_client):
     """Главная обязана оставаться обычной страницей вне Telegram."""
     html = web_client.get("/").text
-    assert "telegram-web-app.js" in html
+    assert "/static/telegram.js" in html
     assert "Посмотри свои шансы" in html
 
 

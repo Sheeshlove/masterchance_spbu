@@ -11,15 +11,11 @@
         href="/static/fonts/PoiretOne-400-cyrillic.woff2">
   <link rel="stylesheet" href="/static/fonts.css">
   <link rel="stylesheet" href="/static/styles.css">
-  <!-- htmx лежит у нас, а не на unpkg: сайт открывают из России, и чужой CDN
-       в критическом пути — лишняя задержка на каждой загрузке. -->
+  <!-- Всё, что грузит страница, лежит у нас: сайт открывают из России, и
+       любой зарубежный хост в критическом пути — риск и задержка.
+       SDK Telegram здесь намеренно НЕ подключается тегом: telegram.js сам
+       подтянет его, и только если мы действительно внутри Telegram. -->
   <script src="/static/htmx.min.js" defer></script>
-  <!-- SDK Telegram обязан грузиться с telegram.org: со своей копией Mini App
-       не заработает. Но обязательно defer — без него это блокирующий скрипт
-       в <head>, и страница не рисуется, пока telegram.org не ответит.
-       Порядок с /static/telegram.js сохраняется: defer-скрипты выполняются
-       по очереди, так что SDK успевает загрузиться раньше. -->
-  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
   <script src="/static/telegram.js" defer></script>
 </head>
 <body>
