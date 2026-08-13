@@ -19,8 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.application.use_cases.get_applicant_forecast import GetApplicantForecastUseCase
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
-from app.infrastructure.db.engine import ensure_indexes, make_engine
-from app.infrastructure.db.models import Base
+from app.infrastructure.db.engine import make_engine, prepare_schema
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.presentation import content
 from app.presentation.web.view import fmt_update, to_view
@@ -28,8 +27,9 @@ from app.presentation.web.view import fmt_update, to_view
 _BASE_DIR = Path(__file__).resolve().parent
 
 _engine = make_engine(settings.database_url)
-Base.metadata.create_all(_engine)
-ensure_indexes(_engine)
+# Намеренно не роняет импорт, если база занята обновлятором: сайт должен
+# подняться и в этом случае — см. prepare_schema().
+prepare_schema(_engine)
 _Session = sessionmaker(bind=_engine, future=True)
 
 app = FastAPI(title="MasterChance — посмотри свои шансы")

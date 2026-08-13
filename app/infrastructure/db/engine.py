@@ -23,6 +23,9 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
+
+from app.config.logger import logger
 
 # Индексы, без которых каждый показ прогноза читает таблицу заявок целиком.
 #
@@ -47,6 +50,9 @@ _INDEXES = (
 )
 
 
+_warned_about_wal = False
+
+
 def make_engine(url: str, *, echo: bool = False) -> Engine:
     """Engine с настройками SQLite, при которых читатели не ждут писателя."""
     engine = create_engine(url, echo=echo, future=True)
@@ -56,18 +62,42 @@ def make_engine(url: str, *, echo: bool = False) -> Engine:
 
     @event.listens_for(engine, "connect")
     def _tune(dbapi_connection, _record):  # noqa: ANN001
+        global _warned_about_wal
+
         cursor = dbapi_connection.cursor()
         try:
-            # Порядок важен: сначала таймаут, потом смена журнала. Переключение
-            # в WAL само требует короткой блокировки, и если её занял
-            # обновлятор, ждать этого мы должны уже по-новому, а не 5 секунд.
             cursor.execute("PRAGMA busy_timeout=15000")
-            cursor.execute("PRAGMA journal_mode=WAL")
             # При WAL полная синхронизация на каждую транзакцию не нужна:
             # потерять можно только последние транзакции при отключении
             # питания, но не саму базу. Списки всё равно перекачиваются
             # каждые 3 часа, так что цена такой потери — ноль.
             cursor.execute("PRAGMA synchronous=NORMAL")
+
+            # Переключение журнала — единственное, что здесь может не удаться.
+            #
+            # Смена режима требует эксклюзивной блокировки, и busy_timeout на
+            # неё НЕ распространяется: если базу в этот момент держит
+            # обновлятор, PRAGMA падает сразу же, не ожидая ни секунды. А так
+            # как всё это выполняется на импорте модуля, необработанная ошибка
+            # означала бы, что сайт и бот вообще не поднимаются — ровно в тот
+            # момент, когда идёт первый проход обновлятора после выката.
+            #
+            # Поэтому неудача здесь не фатальна. Режим журнала записан в самом
+            # файле базы, так что достаточно, чтобы переключение удалось хоть
+            # одному соединению хоть когда-нибудь: PRAGMA стоит в обработчике
+            # connect и выполняется на каждом новом соединении, а на базе,
+            # которая уже в WAL, она отрабатывает и под чужой блокировкой.
+            # То есть режим включится сам, как только база освободится.
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            except Exception as exc:
+                if not _warned_about_wal:
+                    _warned_about_wal = True
+                    logger.warning(
+                        "Не удалось включить WAL (%s). Скорее всего база занята "
+                        "обновлятором. Работаем как есть, следующее соединение "
+                        "попробует снова.", exc,
+                    )
         finally:
             cursor.close()
 
@@ -84,6 +114,34 @@ def ensure_indexes(engine: Engine) -> None:
     with engine.begin() as conn:
         for ddl in _INDEXES:
             conn.execute(text(ddl))
+
+
+def prepare_schema(engine: Engine) -> bool:
+    """
+    Подготовить базу к работе: таблицы и индексы. Вернуть, всё ли получилось.
+
+    Обе операции требуют записи, а база общая: пока обновлятор заливает списки,
+    он держит её эксклюзивно. Раньше это стоило сервису запуска — CREATE INDEX
+    ждал busy_timeout и падал, ошибка вылетала прямо из импорта модуля, и
+    контейнер уходил в цикл перезапусков ровно тогда, когда шёл первый проход
+    обновлятора.
+
+    Не подняться из-за занятой базы — хуже, чем подняться без индекса: индекс
+    досоздастся при следующем старте или самим обновлятором, который держит
+    блокировку по праву. Поэтому неудача только пишется в лог.
+    """
+    from app.infrastructure.db.models import Base
+
+    try:
+        Base.metadata.create_all(engine)
+        ensure_indexes(engine)
+        return True
+    except OperationalError as exc:
+        logger.warning(
+            "База занята, схему сейчас не подготовить (%s). Сервис поднимаем "
+            "как есть — попробуем при следующем запуске.", exc,
+        )
+        return False
 
 
 def analyze(engine: Engine) -> None:

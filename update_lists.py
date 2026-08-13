@@ -7,8 +7,7 @@ from app.application.use_cases.recalculate_monte_carlo import RecalculateMonteCa
 from app.application.use_cases.update_lists import UpdateApplicationListsUseCase
 from app.config.config import settings
 from app.config.logger import logger
-from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine
-from app.infrastructure.db.models import Base
+from app.infrastructure.db.engine import analyze, make_engine, prepare_schema
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 
@@ -27,8 +26,7 @@ def main():
     logger.info("=== masterchance старт (вуз=%s, monte-carlo=%s) ===", university, run_mc)
     # 1) Настройка БД
     engine = make_engine(settings.database_url, echo=settings.db_echo)
-    Base.metadata.create_all(engine)
-    ensure_indexes(engine)
+    prepare_schema(engine)
     Session = sessionmaker(bind=engine, future=True)
 
     # 2) Инициализация

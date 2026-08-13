@@ -4,8 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from app.application.use_cases.recalculate_monte_carlo import RecalculateMonteCarloUseCase
 from app.config.config import settings
 from app.config.logger import logger
-from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine
-from app.infrastructure.db.models import Base
+from app.infrastructure.db.engine import analyze, make_engine, prepare_schema
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 
@@ -13,8 +12,7 @@ def main() -> None:
     logger.info("=== Полный пересчёт Monte‑Carlo ===")
 
     engine = make_engine(settings.database_url, echo=settings.db_echo)
-    Base.metadata.create_all(engine)  # just in case
-    ensure_indexes(engine)
+    prepare_schema(engine)
     Session = sessionmaker(bind=engine, future=True)
     session = Session()
 

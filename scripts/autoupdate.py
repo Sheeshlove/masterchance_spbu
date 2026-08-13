@@ -33,8 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.config.config import settings  # noqa: E402
-from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine  # noqa: E402
-from app.infrastructure.db.models import Base  # noqa: E402
+from app.infrastructure.db.engine import analyze, make_engine, prepare_schema  # noqa: E402
 from app.infrastructure.db.repositories.program_repository import ProgramRepository  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,8 +60,7 @@ def run_once() -> None:
     from build_snapshot import build
 
     engine = make_engine(settings.database_url, echo=settings.db_echo)
-    Base.metadata.create_all(engine)
-    ensure_indexes(engine)
+    prepare_schema(engine)
     session = sessionmaker(bind=engine, future=True)()
     repo = ProgramRepository(session)
 

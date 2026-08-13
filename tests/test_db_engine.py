@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from app.infrastructure.db.engine import analyze, ensure_indexes, make_engine
+from app.infrastructure.db.engine import (
+    analyze,
+    ensure_indexes,
+    make_engine,
+    prepare_schema,
+)
 from app.infrastructure.db.models import Base
 
 
@@ -191,3 +196,80 @@ def test_reader_is_not_blocked_while_another_process_writes(tmp_path):
         writer.rollback()
         writer.close()
         reader.close()
+
+
+# ── Занятая база не должна мешать сервису подняться ──────────────────────────
+
+def _hold_write_lock(db_path):
+    """Соединение, держащее эксклюзивную блокировку, — как обновлятор в проходе."""
+    con = sqlite3.connect(db_path, timeout=0)
+    con.execute("BEGIN IMMEDIATE")
+    con.execute("CREATE TABLE IF NOT EXISTS _busy (x)")
+    return con
+
+
+def test_service_starts_even_if_the_updater_holds_the_database(tmp_path):
+    """
+    Так уже ломалось в бою. Смена журнала требует эксклюзивной блокировки, и
+    busy_timeout на неё НЕ действует: занятая база отбивает PRAGMA мгновенно.
+    Всё это выполняется на импорте модуля, поэтому необработанная ошибка
+    означала, что сайт и бот не поднимаются вовсе — ровно в тот момент, когда
+    идёт первый проход обновлятора после выката.
+    """
+    db = tmp_path / "busy.db"
+    sqlite3.connect(db).close()
+    holder = _hold_write_lock(db)
+    try:
+        engine = make_engine(f"sqlite:///{db}")
+        assert prepare_schema(engine) is False, (
+            "подготовка схемы на занятой базе должна честно сообщить о неудаче"
+        )
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_wal_switches_itself_on_once_the_database_frees_up(tmp_path):
+    """
+    Раз неудача не фатальна, важно, чтобы режим включился сам. PRAGMA стоит в
+    обработчике connect, то есть повторяется на каждом новом соединении.
+    """
+    db = tmp_path / "later.db"
+    sqlite3.connect(db).close()
+
+    holder = _hold_write_lock(db)
+    engine = make_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA journal_mode")).scalar().lower() != "wal"
+    engine.dispose()
+
+    holder.rollback()
+    holder.close()
+
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA journal_mode")).scalar().lower() == "wal"
+
+
+def test_indexes_are_created_on_the_next_start_after_a_busy_one(tmp_path):
+    """Пропущенный из-за занятости индекс должен появиться со следующего раза."""
+    db = tmp_path / "retry.db"
+    engine = make_engine(f"sqlite:///{db}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX IF EXISTS ix_applications_applicant"))
+        conn.execute(text("DROP INDEX IF EXISTS ix_applications_consent"))
+    engine.dispose()
+
+    holder = _hold_write_lock(db)
+    assert prepare_schema(engine) is False
+    holder.rollback()
+    holder.close()
+
+    assert prepare_schema(engine) is True
+    with engine.connect() as conn:
+        names = {
+            r[0] for r in conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+    assert {"ix_applications_applicant", "ix_applications_consent"} <= names

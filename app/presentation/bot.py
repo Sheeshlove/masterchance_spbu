@@ -34,13 +34,13 @@ from app.application.use_cases.get_applicant_forecast import (
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
 from app.config.logger import logger
-from app.infrastructure.db.engine import ensure_indexes, make_engine
-from app.infrastructure.db.models import Base
+from app.infrastructure.db.engine import make_engine, prepare_schema
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
 _engine = make_engine(settings.database_url)
-Base.metadata.create_all(_engine)
-ensure_indexes(_engine)
+# Намеренно не роняет импорт, если база занята обновлятором: бот должен
+# подняться и в этом случае — см. prepare_schema().
+prepare_schema(_engine)
 _Session = sessionmaker(bind=_engine, future=True)
 
 
