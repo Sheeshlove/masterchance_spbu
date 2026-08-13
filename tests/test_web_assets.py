@@ -89,3 +89,44 @@ def test_app_is_started_behind_a_proxy():
     web = Path("web.py").read_text(encoding="utf-8")
     assert "proxy_headers=True" in web
     assert 'forwarded_allow_ips="*"' in web
+
+
+def test_no_render_blocking_scripts(web_client):
+    """
+    Скрипт в <head> без defer/async останавливает отрисовку, пока не скачается.
+    Для telegram-web-app.js это особенно дорого: свою копию положить нельзя,
+    а до telegram.org из России бывает далеко — страница висит белой.
+    """
+    import re
+
+    html = web_client.get("/").text
+    head = html.split("</head>")[0]
+    for tag in re.findall(r"<script\b[^>]*>", head):
+        if "src=" not in tag:
+            continue
+        assert " defer" in tag or " async" in tag, f"блокирующий скрипт: {tag}"
+
+
+def test_only_telegram_sdk_comes_from_outside(web_client):
+    """
+    Всё, что можно, лежит у нас. Единственное исключение — SDK Telegram:
+    со своей копией Mini App не работает.
+
+    Считаются только теги, которые ЗАГРУЖАЮТ ресурс: <script src> и <link href>.
+    Обычные ссылки в тексте (телеграм автора, репозиторий) ничего не тянут и
+    на скорость не влияют.
+    """
+    import re
+    from urllib.parse import urlparse
+
+    html = web_client.get("/").text
+    loading = re.findall(r'<(?:script|link)\b[^>]*?(?:src|href)="(https?://[^"]+)"', html)
+    hosts = {urlparse(u).netloc for u in loading}
+
+    assert hosts <= {"telegram.org"}, f"лишние внешние источники: {hosts - {'telegram.org'}}"
+
+
+def test_htmx_is_served_locally():
+    js = STATIC / "htmx.min.js"
+    assert js.is_file(), "htmx не лежит в static"
+    assert js.stat().st_size > 20_000, "файл htmx подозрительно мал"
