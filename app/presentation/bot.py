@@ -21,7 +21,6 @@ from aiogram.types import (
     Message,
     WebAppInfo,
 )
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.application.use_cases.get_applicant_forecast import (
@@ -35,12 +34,43 @@ from app.application.use_cases.get_applicant_forecast import (
 from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseCase
 from app.config.config import settings
 from app.config.logger import logger
+from app.infrastructure.db.engine import ensure_indexes, make_engine
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
-_engine = create_engine(settings.database_url, echo=False, future=True)
+_engine = make_engine(settings.database_url)
 Base.metadata.create_all(_engine)
+ensure_indexes(_engine)
 _Session = sessionmaker(bind=_engine, future=True)
+
+
+# ── Работа с БД: только в отдельном потоке ───────────────────────────────────
+#
+# SQLAlchemy здесь синхронный, и раньше эти вызовы стояли прямо в теле
+# async-хендлеров. Пока запрос шёл, event loop aiogram стоял целиком — то есть
+# бот замирал не для одного человека, а СРАЗУ ДЛЯ ВСЕХ. Если в этот момент
+# обновлятор держал базу (см. app/infrastructure/db/engine.py), бот выглядел
+# мёртвым столько, сколько длилась запись.
+#
+# Сессия создаётся внутри функции намеренно: объект Session не потокобезопасен,
+# и заводить его нужно в том же потоке, где он используется.
+
+def _load_forecast(applicant_id: str) -> ForecastResult | None:
+    session = _Session()
+    try:
+        return GetApplicantForecastUseCase(ProgramRepository(session)).execute(applicant_id)
+    finally:
+        session.close()
+
+
+def _load_last_update() -> datetime | None:
+    session = _Session()
+    try:
+        return GetLastUpdateTimeUseCase(ProgramRepository(session)).execute()
+    except Exception:
+        return None
+    finally:
+        session.close()
 
 
 def split_message(text: str, max_len: int = 4000) -> List[str]:
@@ -242,14 +272,7 @@ async def setup_menu_button(bot: Bot) -> None:
 
 
 async def start_cmd(msg: Message):
-    session = _Session()
-    repo = ProgramRepository(session)
-    try:
-        last_dt = GetLastUpdateTimeUseCase(repo).execute()
-    except Exception:
-        last_dt = None
-    finally:
-        session.close()
+    last_dt = await asyncio.to_thread(_load_last_update)
 
     def _fmt(dt: datetime | None) -> str:
         return dt.strftime("%d.%m.%Y %H:%M") if dt else "нет данных"
@@ -276,11 +299,8 @@ async def applicant_handler(msg: Message):
     if not applicant_id:
         return
 
-    session = _Session()
-    repo = ProgramRepository(session)
-
     try:
-        result = GetApplicantForecastUseCase(repo).execute(applicant_id)
+        result = await asyncio.to_thread(_load_forecast, applicant_id)
         if result is None:
             await msg.answer(
                 f"Не найдено заявок для абитуриента `{applicant_id}`.",
@@ -300,8 +320,6 @@ async def applicant_handler(msg: Message):
     except Exception as exc:
         logger.exception("TG-handler error: %s", exc)
         await msg.answer("Произошла ошибка 😥")
-    finally:
-        session.close()
 
 
 def start_bot(bot_token) -> None:
