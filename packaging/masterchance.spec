@@ -17,8 +17,8 @@ PyInstaller-спека десктоп-клиента MasterChance.
 
 Клиент НЕ считает Монте-Карло (он берёт готовый снапшот), поэтому numpy /
 pandas / numba / matplotlib и парсеры на Selenium в сборку не попадают —
-это и держит размер небольшим. Импорт pandas в ProgramRepository ленивый
-(get_program_meta_df), так что исключение безопасно.
+это и держит размер небольшим. ProgramRepository счётный стек не импортирует
+вовсе, так что исключение безопасно.
 """
 import sys
 
@@ -28,7 +28,7 @@ IS_MACOS = sys.platform == "darwin"
 
 EXCLUDES = [
     # тяжёлый счётный стек — только на сервере
-    "numpy", "pandas", "numba", "llvmlite", "matplotlib", "scipy",
+    "numpy", "pandas", "numba", "llvmlite", "matplotlib",
     # серверные/ботовые зависимости
     "aiogram", "fastapi", "uvicorn", "starlette", "jinja2",
     "selenium", "webdriver_manager", "alembic",

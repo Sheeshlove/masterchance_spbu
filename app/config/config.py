@@ -76,21 +76,11 @@ class Settings(BaseSettings):
     # Доля выбывающих среди тех, у кого НИГДЕ нет согласия (consent=False по всем его заявлениям).
     # Значение 0.2 означает «ровно 20% из пула E будем исключать в каждой симуляции».
     opt_out_ratio: float = Field(0.20, alias="MC_OPTOUT_RATIO")
-    # Крутизна зависимости шанса «уйти» от перцентиля способности (vi).
+    # Крутизна зависимости шанса «уйти» от перцентиля конкурсного балла.
     # Вероятности пропорциональны p^alpha, где p — перцентиль, alpha>=1 (3 — агрессивнее).
     opt_out_alpha: float = Field(1.0, alias="MC_OPTOUT_STRENGTH")
-    # Режим выбора набора «ушедших»:
-    #  - "per_simulation": в КАЖДОЙ симуляции выбираем заново (по текущим, уже импутированным vi);
-    #  - "fixed": один раз при инициализации (по детерминированной «базовой способности»).
-    opt_out_mode: Literal["per_simulation", "fixed"] = Field("per_simulation", alias="MC_OPTOUT_MODE")
 
     bot_show_anchored: bool = Field(True, alias="BOT_SHOW_ANCHORED")
-
-    # ───────────────── Экзамены: freeze после дедлайна ────────────────
-    # Включение механики заморозки нулей по истёкшим экзаменам
-    exam_freeze_enabled: bool = Field(True, alias="MC_EXAM_FREEZE_ENABLED")
-    # Грация (в часах) после последней даты экзамена
-    exam_grace_hours: int = Field(36, alias="MC_EXAM_GRACE_HOURS")
 
     @model_validator(mode="before")
     def _preprocess(cls, values: dict[str, Any]) -> dict[str, Any]:
