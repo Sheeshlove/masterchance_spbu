@@ -27,6 +27,28 @@ REASON_ICONS = {
 }
 
 
+def score_breakdown(exam: ExamStatus) -> str:
+    """
+    Балл слагаемыми: «93+5=98».
+
+    Разбивку печатают не все: ВШЭ публикует только сумму конкурсных баллов, без
+    отдельных колонок за испытание и за индивидуальные достижения. Складывать
+    там нечего, и «100=100» — не разбивка, а шум, поэтому в таком случае
+    показывается одно число.
+    """
+    parts: list[str] = []
+    if exam.vi_score and exam.vi_score > 0:
+        parts.append(f"{exam.vi_score}")
+    if exam.id_achievements and exam.id_achievements > 0:
+        parts.append(f"+{exam.id_achievements}")
+    if exam.target_id_achievements and exam.target_id_achievements > 0:
+        parts.append(f"+{exam.target_id_achievements}")
+
+    if len(parts) <= 1:
+        return f"{exam.total_score}"
+    return f"{''.join(parts)}={exam.total_score}"
+
+
 def reason_view(reason: Reason) -> dict:
     """Пояснение «почему такой шанс» → цвет и значок для шаблона."""
     return {
@@ -38,15 +60,7 @@ def reason_view(reason: Reason) -> dict:
 
 def exam_view(exam: ExamStatus) -> dict:
     if exam.state is ExamState.PASSED:
-        parts = []
-        if exam.vi_score and exam.vi_score > 0:
-            parts.append(f"{exam.vi_score}")
-        if exam.id_achievements and exam.id_achievements > 0:
-            parts.append(f"+{exam.id_achievements}")
-        if exam.target_id_achievements and exam.target_id_achievements > 0:
-            parts.append(f"+{exam.target_id_achievements}")
-        parts.append(f"={exam.total_score}")
-        return {"cls": "ok", "icon": "🟢", "text": f"Сдан: {''.join(parts)}", "warn": None}
+        return {"cls": "ok", "icon": "🟢", "text": f"Сдан: {score_breakdown(exam)}", "warn": None}
 
     if exam.state is ExamState.NOT_PUBLISHED:
         return {"cls": "wait", "icon": "🟡", "text": "Расписание экзамена пока не опубликовано", "warn": None}

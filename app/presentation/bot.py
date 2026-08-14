@@ -35,6 +35,7 @@ from app.application.use_cases.get_last_update_time import GetLastUpdateTimeUseC
 from app.config.config import settings
 from app.config.logger import logger
 from app.domain.universities import label as university_label
+from app.presentation.web.view import score_breakdown
 from app.infrastructure.db.engine import ensure_indexes, make_engine
 from app.infrastructure.db.models import Base
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
@@ -104,15 +105,13 @@ def _human_prog_line(dept_code: str, prog_name: str) -> str:
 def _render_exam_line(exam: ExamStatus) -> str | None:
     """Структура статуса экзамена → одна Markdown-«подстрочка» направления."""
     if exam.state is ExamState.PASSED:
-        parts: List[str] = []
-        if exam.vi_score and exam.vi_score > 0:
-            parts.append(f"{exam.vi_score}")
-        if exam.id_achievements and exam.id_achievements > 0:
-            parts.append(f"+{exam.id_achievements}")
-        if exam.target_id_achievements and exam.target_id_achievements > 0:
-            parts.append(f"+{exam.target_id_achievements}")
-        parts.append(f"=**{exam.total_score}**")
-        return f"   ↳ 🟢 Cдан: {''.join(parts)}"
+        # Разбивку («93+5=98») печатают не все вузы: у ВШЭ есть только сумма
+        # конкурсных баллов. Общий формат — в score_breakdown, здесь только
+        # выделение итога жирным.
+        breakdown = score_breakdown(exam)
+        shown = (breakdown.replace(f"={exam.total_score}", f"=**{exam.total_score}**")
+                 if "=" in breakdown else f"**{exam.total_score}**")
+        return f"   ↳ 🟢 Cдан: {shown}"
 
     if exam.state is ExamState.NOT_PUBLISHED:
         return "   ↳ 🟡 Расписание экзамена пока не опубликовано"

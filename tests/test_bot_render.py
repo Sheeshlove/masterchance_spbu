@@ -78,7 +78,8 @@ def test_exam_line_passed_skips_zero_achievements():
         ExamStatus(state=ExamState.PASSED, vi_score=88, id_achievements=0,
                    target_id_achievements=0, total_score=88)
     )
-    assert "88=**88**" in line
+    # разбивки нет — показываем одно число, а не «88=88»
+    assert "**88**" in line and "88=" not in line
     assert "+0" not in line
 
 

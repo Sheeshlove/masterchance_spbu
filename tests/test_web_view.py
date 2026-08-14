@@ -134,11 +134,17 @@ def test_exam_view_passed_composes_score_string():
 
 
 def test_exam_view_passed_omits_zero_achievements():
+    """
+    Складывать нечего — показываем одно число. Так печатает баллы ВШЭ: у неё
+    есть только сумма конкурсных баллов, без отдельных колонок за испытание и
+    за достижения, и «88=88» было бы не разбивкой, а шумом.
+    """
     view = exam_view(
         ExamStatus(state=ExamState.PASSED, vi_score=88, id_achievements=0,
                    target_id_achievements=0, total_score=88)
     )
-    assert view["text"] == "Сдан: 88=88"
+    assert view["text"] == "Сдан: 88"
+    assert "+0" not in view["text"]
 
 
 def test_exam_view_upcoming_lists_dates():
