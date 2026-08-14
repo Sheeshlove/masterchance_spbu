@@ -287,3 +287,22 @@ def test_summary_of_a_foreign_campus_is_not_downloaded(pages):
 
     assert all("nn_" not in url and "perm" not in url for url in urls)
     assert all("ochno_zaochn" not in url for url in urls), "очно-заочка — другой конкурс"
+
+
+def test_a_downloaded_file_can_be_parsed_without_the_network():
+    """
+    Разбор отделён от скачивания: скачанный список проверяется с диска
+    (scripts/diagnose_source.py hse --file=…), и сразу видно, дело в адресе
+    или в самом файле.
+    """
+    source = _hse()
+    source._seats = {}          # сводку с диска взять неоткуда
+
+    programs = source.parse(
+        Fetched(url="/tmp/36634049850_Budget.xlsx", raw=_XLSX),
+        ProgramListing(ref="/tmp/36634049850_Budget.xlsx"),
+    )
+
+    assert len(programs) == 1
+    assert programs[0].program_name == "Анализ данных в биологии и медицине (Москва)"
+    assert len(programs[0].applications) == 5

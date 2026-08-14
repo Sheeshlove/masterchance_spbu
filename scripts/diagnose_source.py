@@ -12,6 +12,11 @@ app/infrastructure/parser/openlists/columns.py.
     python scripts/diagnose_source.py hse
     python scripts/diagnose_source.py msu --url=https://cpk.msu.ru/rating/2027
 
+Уже скачанный список можно проверить прямо с диска, не трогая сеть, — удобно,
+когда непонятно, дело в адресе или в самом файле:
+
+    python scripts/diagnose_source.py hse --file=~/Downloads/36634049850_Budget.xlsx
+
 На сервере:
     docker run --rm --env-file .env -v "$PWD/data:/app/data" \
         masterchance:local scripts/diagnose_source.py hse
@@ -57,9 +62,49 @@ def _describe_columns(program) -> None:
         print("   ⚠ Число мест не найдено: шанс по этой программе посчитать будет не на чем.")
 
 
+def _check_file(university: str, path: Path) -> int:
+    """Разобрать файл с диска: сеть не нужна, проверяется только сам разбор."""
+    from app.infrastructure.parser.openlists.crawl import Fetched, sniff_binary
+    from app.infrastructure.parser.openlists.source import OpenListsSource
+    from app.infrastructure.parser.openlists.specs import default_spec
+
+    raw = path.read_bytes()
+    print(f"\nФайл:   {path}")
+    print(f"Размер: {len(raw)} байт, формат: {sniff_binary(raw) or 'текст/HTML'}")
+
+    source = OpenListsSource(default_spec(university))
+    # Сводку с местами по файлу с диска не ищем — качать её неоткуда, поэтому
+    # мест здесь не будет даже там, где на сайте они бы нашлись.
+    source._seats = {}  # noqa: SLF001 — диагностика ходит в потроха осознанно
+    programs = source.parse(
+        Fetched(url=str(path), raw=raw), ProgramListing(ref=str(path), title=path.stem),
+    )
+    if not programs:
+        print("\n❌ Ни одной программы. Значит, либо это не список, либо колонки "
+              "названы непривычно — см. app/infrastructure/parser/openlists/columns.py")
+        return 1
+
+    for program in programs:
+        print(f"\n   программа:   {program.program_name}")
+        print(f"   направление: {program.speciality_code}, форма: {program.education_form or '—'}")
+        print(f"   наш код:     {program.program_code}")
+        print(f"   список от:   {program.stats.generated_at:%d.%m.%Y %H:%M}")
+        _describe_columns(program)
+        consented = sum(1 for a in program.applications if a.consent)
+        scored = sum(1 for a in program.applications if a.total_score)
+        print(f"   с согласием: {consented}, с выставленным баллом: {scored} "
+              f"из {len(program.applications)}")
+        if program.applications and not scored:
+            print("   ⚠ Баллов нет ни у кого — вуз ещё не выставил результаты. "
+                  "Шанс по такому списку не считается (и это правильно).")
+    print("\n✅ Файл разбирается.")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     args = [a for a in argv[1:] if not a.startswith("--")]
     url = next((a.split("=", 1)[1] for a in argv[1:] if a.startswith("--url=")), None)
+    file_arg = next((a.split("=", 1)[1] for a in argv[1:] if a.startswith("--file=")), None)
     if not args:
         return _usage()
 
@@ -71,6 +116,13 @@ def main(argv: list[str]) -> int:
     print("=" * 68)
     print(f"ДИАГНОСТИКА ИСТОЧНИКА: {label(university)}")
     print("=" * 68)
+
+    if file_arg:
+        path = Path(file_arg).expanduser()
+        if not path.is_file():
+            print(f"❌ Файла нет: {path}")
+            return 2
+        return _check_file(university, path)
 
     if url:
         # Разовая проверка чужого адреса без правки .env.

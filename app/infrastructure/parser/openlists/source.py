@@ -206,7 +206,16 @@ class OpenListsSource(IUniversitySource):
         except Exception as exc:  # noqa: BLE001 — страница может быть снята; это не сбой прохода
             logger.warning("[%s] Список недоступен (%s): %s", self.university, listing.ref, exc)
             return []
+        return self.parse(page, listing)
 
+    def parse(self, page: Fetched, listing: ProgramListing) -> list[ParsedProgram]:
+        """
+        Разобрать уже скачанный ответ.
+
+        Отделено от fetch(), чтобы разбор можно было проверить на файле с
+        диска: `scripts/diagnose_source.py hse --file=…` отвечает на вопрос
+        «дело в адресе или в самом файле», не трогая сеть.
+        """
         # Дату публикации ищем только в тексте: у файла Excel её взять неоткуда,
         # там она если и есть, то в шапке листа — а её мы читаем ниже.
         generated_at = (
