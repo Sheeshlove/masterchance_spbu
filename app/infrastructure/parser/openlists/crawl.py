@@ -14,8 +14,9 @@ import re
 import urllib.parse
 import urllib.request
 import zlib
+from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Sequence
 
 from app.infrastructure.http import urlopen
 
@@ -33,22 +34,61 @@ _HEADERS = {
 
 
 class Fetched:
-    """Ответ сервера в удобном виде: текст плюс распознанный JSON."""
+    """
+    Ответ сервера в удобном виде.
 
-    def __init__(self, url: str, body: str, content_type: str = "") -> None:
+    Байты хранятся как есть, а текст получается из них по требованию: списки
+    приходят не только страницами, но и файлами Excel, а их декодировать в
+    строку нельзя — из zip-архива получится мусор.
+    """
+
+    def __init__(self, url: str, raw: bytes, content_type: str = "",
+                 charset: str | None = None) -> None:
         self.url = url
-        self.body = body
+        self.raw = raw
         self.content_type = content_type
+        self._charset = charset
+        self._text: str | None = None
+
+    @property
+    def body(self) -> str:
+        """Тело как текст. Для двоичных файлов бессмысленно — см. is_binary."""
+        if self._text is None:
+            self._text = self.raw.decode(self._charset or _guess_charset(self.raw), errors="replace")
+        return self._text
+
+    @property
+    def is_binary(self) -> bool:
+        """Excel, PDF и прочее, что текстом не читается."""
+        return sniff_binary(self.raw) is not None
 
     @property
     def is_json(self) -> bool:
+        if self.is_binary:
+            return False
         if "json" in self.content_type.lower():
             return True
-        head = self.body.lstrip()[:1]
-        return head in ("{", "[")
+        return self.body.lstrip()[:1] in ("{", "[")
 
     def json(self) -> Any:
         return json.loads(self.body)
+
+
+#: Сигнатуры файлов, которые приходят вместо страницы.
+_MAGIC = (
+    (b"PK\x03\x04", "xlsx"),                    # zip: xlsx, ods, docx
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "xls"),  # старый бинарный Excel (OLE2)
+    (b"%PDF", "pdf"),
+)
+
+
+def sniff_binary(raw: bytes) -> str | None:
+    """Что за файл пришёл: 'xlsx' | 'xls' | 'pdf' | None (значит текст)."""
+    head = (raw or b"")[:8]
+    for magic, kind in _MAGIC:
+        if head.startswith(magic):
+            return kind
+    return None
 
 
 def fetch(url: str, timeout: int = 60, data: bytes | None = None) -> Fetched:
@@ -66,8 +106,7 @@ def fetch(url: str, timeout: int = 60, data: bytes | None = None) -> Fetched:
             raw = zlib.decompress(raw, -zlib.MAX_WBITS)
         charset = response.headers.get_content_charset()
         content_type = response.headers.get("Content-Type", "")
-    text = raw.decode(charset or _guess_charset(raw), errors="replace")
-    return Fetched(url=url, body=text, content_type=content_type)
+    return Fetched(url=url, raw=raw, content_type=content_type, charset=charset)
 
 
 def _guess_charset(raw: bytes) -> str:
@@ -89,39 +128,119 @@ def _guess_charset(raw: bytes) -> str:
         return "windows-1251"
 
 
+@dataclass(frozen=True)
+class Link:
+    """Ссылка вместе с разделом, в котором она стоит."""
+    url: str
+    text: str
+    #: Заголовки над ссылкой, от внешнего к ближнему: «Москва Очная форма
+    #: обучения Списки зарегистрированных абитуриентов». Без этого ссылка
+    #: «Скачать в формате XLS» неотличима от такой же ссылки соседнего кампуса.
+    context: str = ""
+
+    @property
+    def haystack(self) -> str:
+        """Всё, по чему можно опознать ссылку, одной строкой."""
+        return f"{self.context} {self.text} {urllib.parse.unquote(self.url)}"
+
+
+#: Уровень заголовка → его место в стопке. Жирный текст и <summary> считаем
+#: самым глубоким уровнем: на страницах приёма подраздел («Очная форма
+#: обучения») сплошь и рядом выделен именно так, а не тегом заголовка, и без
+#: этого ссылки очной и очно-заочной формы неотличимы.
+_HEADINGS = {
+    "h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6,
+    "b": 7, "strong": 7, "summary": 7, "caption": 7, "legend": 7,
+}
+
+
 class _LinkCollector(HTMLParser):
+    """
+    Собирает ссылки и помнит, под какими заголовками каждая из них оказалась.
+
+    Заголовки держатся стопкой по уровням: новый h2 сбрасывает всё, что глубже,
+    ровно как это читает человек. Страницы, где раздел выделен не заголовком, а
+    жирным текстом, тоже попадают в контекст — через буфер последнего текста.
+    """
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.links: list[tuple[str, str]] = []   # (href, текст ссылки)
+        self.links: list[Link] = []
         self._href: str | None = None
         self._text: list[str] = []
+        self._heading_level: int | None = None
+        self._heading_text: list[str] = []
+        self._headings: dict[int, str] = {}
+        self._recent: list[str] = []
+
+    # ── контекст ───────────────────────────────────────────────────────────
+    def _context(self) -> str:
+        parts = [self._headings[level] for level in sorted(self._headings) if self._headings[level]]
+        recent = _squeeze(" ".join(self._recent))[-160:]
+        return _squeeze(" ".join([*parts, recent]))
 
     def handle_starttag(self, tag, attrs):
-        if tag != "a":
-            return
-        href = dict(attrs).get("href")
-        if href:
-            self._href = href
-            self._text = []
+        # Жирный текст ВНУТРИ ссылки — часть её подписи, а не подраздел.
+        if tag in _HEADINGS and self._href is None:
+            self._heading_level = _HEADINGS[tag]
+            self._heading_text = []
+        elif tag == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self._href = href
+                self._text = []
 
     def handle_endtag(self, tag):
-        if tag == "a" and self._href:
-            text = re.sub(r"\s+", " ", "".join(self._text)).strip()
-            self.links.append((self._href, text))
+        if tag in _HEADINGS and self._heading_level is not None:
+            level = self._heading_level
+            heading = _squeeze("".join(self._heading_text))
+            # Пустой «заголовок» (жирный пробел, иконка) раздел не открывает.
+            if heading:
+                self._headings[level] = heading
+                for deeper in [lvl for lvl in self._headings if lvl > level]:
+                    self._headings.pop(deeper)
+                self._recent = []
+            self._heading_level = None
+        elif tag == "a" and self._href:
+            self.links.append(Link(
+                url=self._href,
+                text=_squeeze("".join(self._text)),
+                context=self._context(),
+            ))
             self._href, self._text = None, []
 
     def handle_data(self, data):
-        if self._href is not None:
+        if self._heading_level is not None:
+            self._heading_text.append(data)
+        elif self._href is not None:
             self._text.append(data)
+        elif data.strip():
+            self._recent.append(data)
+            if len(self._recent) > 40:
+                del self._recent[:-40]
 
 
-def find_links(html: str, base_url: str, pattern: str | None = None) -> list[tuple[str, str]]:
+def _squeeze(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
+
+
+def find_links(
+    html: str,
+    base_url: str,
+    pattern: str | None = None,
+    required: Sequence[str] = (),
+    excluded: Sequence[str] = (),
+) -> list[Link]:
     """
-    Ссылки со страницы: [(абсолютный url, текст)].
+    Ссылки со страницы, отобранные по адресу, подписи и разделу.
 
-    `pattern` — регулярка по url ИЛИ по тексту ссылки: у одних вузов список
-    узнаётся по адресу (/rating/, /spiski/), у других — только по подписи
-    («Списки поступающих», «Рейтинговый список»).
+    `pattern`  — что вообще считать нужной ссылкой: регулярка по адресу ИЛИ по
+                 подписи. У одних вузов список узнаётся по адресу (/rating/,
+                 .xlsx), у других — только по тексту («Рейтинговый список»).
+    `required` — каждая из регулярок обязана найтись в разделе, подписи или
+                 адресе. Так отбираются нужные кампусы и форма обучения.
+    `excluded` — ни одна не должна найтись: очно-заочные, платные, чужие
+                 кампусы.
     """
     collector = _LinkCollector()
     try:
@@ -131,16 +250,27 @@ def find_links(html: str, base_url: str, pattern: str | None = None) -> list[tup
         pass
 
     rx = re.compile(pattern, re.I) if pattern else None
-    out: list[tuple[str, str]] = []
+    need = [re.compile(p, re.I) for p in required]
+    deny = [re.compile(p, re.I) for p in excluded]
+
+    out: list[Link] = []
     seen: set[str] = set()
-    for href, text in collector.links:
-        if href.startswith(("#", "mailto:", "tel:", "javascript:")):
+    for link in collector.links:
+        if link.url.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
-        absolute = urllib.parse.urljoin(base_url, href)
+        absolute = urllib.parse.urljoin(base_url, link.url)
         if absolute in seen:
             continue
-        if rx and not (rx.search(absolute) or rx.search(text)):
+        if rx and not (rx.search(absolute) or rx.search(link.text)):
             continue
+
+        found = Link(url=absolute, text=link.text, context=link.context)
+        haystack = found.haystack
+        if any(p.search(haystack) for p in deny):
+            continue
+        if need and not all(p.search(haystack) for p in need):
+            continue
+
         seen.add(absolute)
-        out.append((absolute, text))
+        out.append(found)
     return out

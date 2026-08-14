@@ -36,7 +36,8 @@ def pages(monkeypatch):
             raise OSError(f"страница не отвечает: {url}")
         body = served[url]
         content_type = "application/json" if body.lstrip()[:1] in "{[" else "text/html"
-        return Fetched(url=url, body=body, content_type=content_type)
+        return Fetched(url=url, raw=body.encode("utf-8"),
+                       content_type=content_type, charset="utf-8")
 
     monkeypatch.setattr(source_module, "fetch", fake_fetch)
     return served

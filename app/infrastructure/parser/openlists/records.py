@@ -44,6 +44,25 @@ _FORM_RX = re.compile(r"(очно-заочн\w+|заочн\w+|очн\w+)\s*(?:ф
 _CONSENT_YES = {"да", "+", "есть", "подано", "подана", "имеется", "true", "1", "✓", "v", "yes"}
 _CONSENT_NO = {"нет", "-", "—", "–", "", "false", "0", "не подано", "отсутствует", "no"}
 
+#: Платный конкурс: другие места, другой проходной, нам не нужен.
+_PAID_RX = re.compile(r"платн|договор|контрактн|коммерч|с оплатой|внебюджет", re.I)
+_BUDGET_RX = re.compile(r"бюджет|за счет бюджетных|бесплатн|кцп", re.I)
+
+
+def is_paid(text: str) -> bool:
+    """
+    Платная ли это строка/таблица.
+
+    Признак ищется в том, что вуз написал сам. Если написано и «бюджетные», и
+    «платные» (общая шапка на два конкурса), считаем непонятным и не
+    отбрасываем: потерять бюджетный список хуже, чем прихватить лишнюю строку,
+    а по колонке финансирования она отсеется точнее.
+    """
+    value = (text or "").replace("ё", "е")
+    if not value.strip():
+        return False
+    return bool(_PAID_RX.search(value)) and not _BUDGET_RX.search(value)
+
 
 @dataclass
 class ProgramFacts:
@@ -205,7 +224,13 @@ def _dedupe(applications: Iterable[Application]) -> list[Application]:
 
 
 def table_to_applications(table: HtmlTable, program_code: str) -> list[Application]:
-    """Таблица → заявки. Пусто, если таблица не похожа на рейтинговый список."""
+    """
+    Таблица → заявки. Пусто, если таблица не похожа на рейтинговый список.
+
+    Платные строки отбрасываются: сервис считает шансы только по бюджету, а
+    договорные места — другой конкурс с другими местами. В одной таблице с
+    бюджетниками они завысили бы число конкурентов и проходной.
+    """
     fields = map_headers(table.headers)
     if not looks_like_ranking(fields):
         return []
@@ -213,6 +238,8 @@ def table_to_applications(table: HtmlTable, program_code: str) -> list[Applicati
     apps: list[Application] = []
     for row in table.rows:
         rec = {f: v for f, v in zip(fields, row) if f}
+        if is_paid(rec.get("funding", "")):
+            continue
         app = _application(rec, program_code)
         if app:
             apps.append(app)

@@ -28,6 +28,7 @@ from app.infrastructure.parser.base import (
 from app.infrastructure.parser.openlists.crawl import Fetched, fetch, find_links
 from app.infrastructure.parser.openlists.records import (
     ProgramFacts,
+    is_paid,
     json_rows_to_applications,
     looks_like_json_ranking,
     make_stats,
@@ -35,7 +36,7 @@ from app.infrastructure.parser.openlists.records import (
     program_facts,
     table_to_applications,
 )
-from app.infrastructure.parser.openlists.tables import extract_tables
+from app.infrastructure.parser.openlists.sheets import tables_from
 
 _MSK = ZoneInfo("Europe/Moscow")
 
@@ -50,6 +51,9 @@ class SourceSpec:
                     тексту ссылки). None — значит index_urls уже списки.
     index_pattern — какие ссылки вести обход дальше вглубь (факультеты,
                     институты). Работает, пока не исчерпан follow_depth.
+    link_required — каждая регулярка обязана найтись в разделе, подписи или
+                    адресе ссылки. Так отбираются нужные кампусы и очная форма.
+    link_excluded — ни одна не должна найтись: заочное, платное, чужие города.
     json_ref_template — если оглавление приходит JSON-ответом API: шаблон
                     адреса списка, куда подставится найденный идентификатор.
     """
@@ -57,6 +61,8 @@ class SourceSpec:
     index_urls: tuple[str, ...]
     list_pattern: str | None = None
     index_pattern: str | None = None
+    link_required: tuple[str, ...] = ()
+    link_excluded: tuple[str, ...] = ()
     follow_depth: int = 1
     json_ref_template: str | None = None
     max_lists: int = 400
@@ -106,15 +112,21 @@ class OpenListsSource(IUniversitySource):
                         found.setdefault(ref, title)
                     continue
 
-                for link, text in find_links(page.body, url, spec.list_pattern):
-                    found.setdefault(link, text)
+                for link in find_links(page.body, url, spec.list_pattern,
+                                       spec.link_required, spec.link_excluded):
+                    found.setdefault(link.url, link.text)
                 if depth + 1 < spec.follow_depth and spec.index_pattern:
+                    # Вглубь ходим по тем же запретам (не заходим в чужие
+                    # кампусы и в заочное), но без требований: раздел
+                    # факультета может не повторять их у себя в заголовке.
+                    #
                     # Ссылка, уже признанная списком, вглубь не разворачивается:
                     # «…/magistratura/spiski/…» подходит под оба шаблона, и без
                     # этого условия каждый список скачивался бы ещё и как раздел.
                     next_frontier.extend(
-                        link for link, _ in find_links(page.body, url, spec.index_pattern)
-                        if link not in visited and link not in found
+                        link.url for link in find_links(
+                            page.body, url, spec.index_pattern, excluded=spec.link_excluded)
+                        if link.url not in visited and link.url not in found
                     )
             frontier = next_frontier
             if not frontier:
@@ -137,15 +149,27 @@ class OpenListsSource(IUniversitySource):
             logger.warning("[%s] Список недоступен (%s): %s", self.university, listing.ref, exc)
             return []
 
-        generated_at = parse_generated_at(page.body) or datetime.now(_MSK).replace(tzinfo=None)
+        # Дату публикации ищем только в тексте: у файла Excel её взять неоткуда,
+        # там она если и есть, то в шапке листа — а её мы читаем ниже.
+        generated_at = (
+            None if page.is_binary else parse_generated_at(page.body)
+        ) or datetime.now(_MSK).replace(tzinfo=None)
         programs = (
-            self._from_json(page, listing) if page.is_json else self._from_html(page, listing)
+            self._from_json(page, listing) if page.is_json else self._from_tables(page, listing)
         )
         return self._to_parsed(programs, generated_at)
 
-    def _from_html(self, page: Fetched, listing: ProgramListing) -> list[_PageProgram]:
+    def _from_tables(self, page: Fetched, listing: ProgramListing) -> list[_PageProgram]:
+        """Страница, файл Excel или CSV — дальше всё одинаково."""
         out: list[_PageProgram] = []
-        for table in extract_tables(page.body):
+        for table in tables_from(page):
+            # Отдельный лист/таблица под платные места — не наш конкурс.
+            # У ВШЭ, например, бюджет и договор лежат соседними листами одной
+            # книги, и без этой проверки платники попали бы в бюджетный список.
+            if is_paid(f"{table.preamble} {table.page_title} {listing.title}"):
+                logger.debug("[%s] Пропускаем платный конкурс: %s",
+                             self.university, table.page_title or listing.title)
+                continue
             facts = program_facts(
                 # Заголовок над таблицей — самый точный источник; если его нет,
                 # берём заголовок страницы, а в крайнем случае текст ссылки.
