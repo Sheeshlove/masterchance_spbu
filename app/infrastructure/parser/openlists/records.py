@@ -77,6 +77,15 @@ class ProgramFacts:
     speciality_code: str
     education_form: str
     num_places: int
+    #: Кампус, если вуз их разделяет. У ВШЭ «Дизайн» есть и в Москве (30 мест),
+    #: и в Петербурге (7) — это два разных конкурса, и без кампуса они склеятся
+    #: в один: код программы считается от названия.
+    campus: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """Название, как его увидит человек, — с кампусом, если он известен."""
+        return f"{self.program_name} ({self.campus})" if self.campus else self.program_name
 
 
 def to_int(value: Any, default: int = 0) -> int:
@@ -176,13 +185,17 @@ def clean_program_name(text: str, fallback: str = "") -> str:
     return text or fallback.strip()
 
 
-def program_facts(source_text: str, fallback_name: str = "") -> ProgramFacts:
+def program_facts(source_text: str, fallback_name: str = "", campus: str = "") -> ProgramFacts:
     """Заголовок/подпись списка → всё, что мы знаем о конкурсе."""
+    from app.infrastructure.parser.openlists.seats import parse_campus
+
     return ProgramFacts(
         program_name=clean_program_name(source_text, fallback_name),
         speciality_code=parse_speciality(source_text) or parse_speciality(fallback_name) or UNKNOWN_SPECIALITY,
         education_form=parse_education_form(source_text),
         num_places=parse_places(source_text),
+        # Кампус пишут в той же шапке: «…Прикладная математика и информатика Москва».
+        campus=campus or parse_campus(source_text),
     )
 
 

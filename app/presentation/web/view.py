@@ -9,11 +9,14 @@ from datetime import datetime
 from typing import Iterable, Sequence
 
 from app.application.use_cases.get_applicant_forecast import (
+    NO_SEATS,
+    RESULTS_PENDING,
     ExamState,
     ExamStatus,
     ForecastResult,
     Reason,
     ReasonKind,
+    _forecast_blocker,
 )
 from app.domain.universities import label as university_label
 
@@ -59,6 +62,30 @@ def exam_view(exam: ExamStatus) -> dict:
     return {"cls": "done", "icon": "⚪", "text": f"Экзамены завершились (последняя дата: {last})", "warn": warn}
 
 
+def _no_forecast_note(result: ForecastResult) -> str:
+    """
+    Почему по этому вузу нет ни одного шанса — одной фразой.
+
+    Пустая строка, если шансы есть: тогда вкладка показывает обычный итог.
+    Причина берётся у самих направлений, чтобы объяснение на вкладке и
+    объяснение под карточкой не разошлись.
+    """
+    if any(it.prob_cond is not None for it in result.items):
+        return ""
+
+    blockers = {_forecast_blocker(it.competition) for it in result.items}
+    blockers.discard(None)
+    if blockers == {RESULTS_PENDING}:
+        return ("вуз ещё не выставил баллы за вступительные испытания — "
+                "конкурс не определён, и шанс считать не на чем. "
+                "Заявки, приоритеты и согласия показаны как есть.")
+    if NO_SEATS in blockers:
+        return ("вуз не опубликовал число мест ни по одному вашему направлению — "
+                "шанс считать не на чем. Заявки и баллы показаны как есть.")
+    return ("прогноза по этому вузу пока нет — под каждым направлением написано, "
+            "чего не хватает.")
+
+
 def group_view(result: ForecastResult) -> dict:
     """
     Один вуз = одна вкладка.
@@ -90,10 +117,11 @@ def group_view(result: ForecastResult) -> dict:
         "label": university_label(result.university) or "Вуз",
         "applicant_id": result.applicant_id,
         "fail_pct": f"{result.fail_cond * 100:.1f}%",
-        # Ни по одному направлению нет числа мест — считать было не на чем, и
+        # Ни по одному направлению прогноза нет — считать было не на чем, и
         # «в 100% симуляций не прошёл никуда» здесь означало бы не результат
         # модели, а отсутствие данных у вуза.
         "has_chances": any(it.prob_cond is not None for it in result.items),
+        "no_forecast_note": _no_forecast_note(result),
         # ключ НЕ называем "items": в Jinja `view.items` резолвится в метод dict.items
         "programs": items,
         "notes": [n.text for n in result.notes],

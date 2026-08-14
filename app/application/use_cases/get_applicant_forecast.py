@@ -190,6 +190,18 @@ def _build_reasons(
 
     reasons: list[Reason] = []
     seats = comp.seats or 0
+    pending = comp.pending_results > comp.scored_rivals
+
+    # Про незавершённые испытания говорим первым делом: без этого человек
+    # решит, что прочерк вместо шанса — это поломка сайта.
+    if pending:
+        reasons.append(Reason(
+            ReasonKind.NEUTRAL,
+            f"Баллы ещё не выставлены: {comp.pending_results} из {comp.applications} "
+            f"{_plural(comp.applications, 'заявки', 'заявок', 'заявок')} ждут результатов "
+            f"испытаний. Пока конкурс не определён, шанс считать не на чем — "
+            f"вернитесь, когда вуз опубликует результаты.",
+        ))
 
     # 1. Сколько мест и сколько желающих.
     if seats > 0 and comp.applications <= seats:
@@ -238,7 +250,10 @@ def _build_reasons(
                 f"в модели такие ничьи разыгрываются жребием.",
             ))
 
-        if comp.unscored_rivals:
+        # «Списки окончательные» — правда только там, где испытания завершены.
+        # Пока баллы не выставлены, обещать, что нулевые соперники уже не
+        # обойдут, нельзя: они как раз и обойдут, когда результаты появятся.
+        if comp.unscored_rivals and not pending:
             reasons.append(Reason(
                 ReasonKind.GOOD,
                 f"Ещё {comp.unscored_rivals} "
@@ -246,7 +261,7 @@ def _build_reasons(
                 f"в списках без баллов. Списки окончательные, так что в конкурсе они идут "
                 f"с нулём и обойти вас уже не могут.",
             ))
-    else:
+    elif not pending:
         reasons.append(Reason(
             ReasonKind.BAD,
             "Вашего балла в списках нет. Списки окончательные, поэтому в конкурсе вы "
@@ -254,8 +269,8 @@ def _build_reasons(
             "с баллами.",
         ))
 
-    # 3. Балл против прогноза проходного.
-    if comp.my_total_score and q90 is not None and q95 is not None:
+    # 3. Балл против прогноза проходного (пока конкурс не определён, прогноза нет).
+    if comp.my_total_score and q90 is not None and q95 is not None and not pending:
         score = comp.my_total_score
         if score >= q95:
             reasons.append(Reason(
@@ -316,6 +331,36 @@ def _build_reasons(
         ))
 
     return reasons
+
+
+#: Что мешает считать прогноз по направлению. None — ничего не мешает.
+NO_SEATS = "seats"
+RESULTS_PENDING = "pending"
+
+
+def _forecast_blocker(comp: ProgramCompetition | None) -> str | None:
+    """
+    Определён ли конкурс настолько, чтобы его вообще можно было разыграть.
+
+    Два случая, когда нет:
+
+    • вуз не объявил число мест — делить нечего;
+    • вуз ещё не выставил баллы (у ВШЭ в разгар кампании это статусы
+      «Ожидание результатов ВИ» и «На рассмотрении» у большинства заявок).
+      Модель исходит из того, что списки окончательные и ноль — это ноль; пока
+      баллов нет, нули означают «не проверено», и разыгрывать по ним места
+      значит выдавать жребий за прогноз.
+
+    Расклад конкурса при этом остаётся виден: сколько мест, сколько заявок и
+    где человек в очереди — это факты, а не модель.
+    """
+    if comp is None:
+        return None
+    if not comp.seats:
+        return NO_SEATS
+    if comp.pending_results > comp.scored_rivals:
+        return RESULTS_PENDING
+    return None
 
 
 def _build_notes(p_excluded: float) -> list[Reason]:
@@ -423,12 +468,12 @@ class GetApplicantForecastUseCase:
             q = quantiles.get(code)
             comp = competition.get(code)
 
-            # Пока вуз не опубликовал число мест, конкурса не существует:
-            # модель раздаёт нули, и «0.0%» выглядело бы посчитанным ответом,
-            # хотя считать было не на чем. Показываем прочерк — почему, сказано
-            # в объяснении под направлением.
+            # Прогноз показываем, только если конкурс вообще определён.
+            # Иначе модель считает по данным, которых нет, а число на экране
+            # выглядит посчитанным ответом (см. _forecast_blocker).
             probability = probs_cond.get(code)
-            if comp is not None and not comp.seats:
+            blocked = _forecast_blocker(comp) is not None
+            if blocked:
                 probability = None
 
             items.append(
@@ -437,8 +482,10 @@ class GetApplicantForecastUseCase:
                     program_name=prog.name if prog else code,
                     department_code=_display_code(prog.department_code) if prog else code.split(".")[0],
                     prob_cond=probability,
-                    q90=q.q90 if q else None,
-                    q95=q.q95 if q else None,
+                    # Проходной по неопределённому конкурсу — такая же выдумка,
+                    # как и шанс: при невыставленных баллах он выходит нулевым.
+                    q90=None if blocked else (q.q90 if q else None),
+                    q95=None if blocked else (q.q95 if q else None),
                     exam=_build_exam_status(apps_by_code.get(code), sessions_by_code.get(code, [])),
                     competition=comp,
                     reasons=_build_reasons(comp, q.q90 if q else None, q.q95 if q else None, p_excl),

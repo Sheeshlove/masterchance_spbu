@@ -65,6 +65,7 @@ _MAX_LISTS = 400
 
 def _spec(university: str, url: str, *, depth: int = 2, note: str = "",
           required: tuple[str, ...] = (), excluded: tuple[str, ...] = (),
+          list_excluded: tuple[str, ...] = (), seats_required: tuple[str, ...] = (),
           max_lists: int = _MAX_LISTS) -> SourceSpec:
     return SourceSpec(
         university=university,
@@ -73,6 +74,8 @@ def _spec(university: str, url: str, *, depth: int = 2, note: str = "",
         index_pattern=_INDEX_LINK,
         link_required=required,
         link_excluded=_NEVER + excluded,
+        list_excluded=list_excluded,
+        seats_required=seats_required,
         follow_depth=depth,
         max_lists=max_lists,
         note=note,
@@ -96,6 +99,9 @@ DEFAULT_INDEX_URLS: dict[str, str] = {
 #: приёмные кампании со своими местами; в один конкурс с московскими и
 #: питерскими программами они не входят и в выдаче не нужны.
 HSE_CAMPUSES = r"москва|московск|санкт-петербург|спб|питер"
+
+#: Раздел ВШЭ со сводкой: сам список из него не берём, а число мест — берём.
+_HSE_SUMMARY = r"статистика поданных"
 
 _NOTES: dict[str, str] = {
     HSE: (
@@ -131,12 +137,13 @@ def default_spec(university: str, index_url: str | None = None) -> SourceSpec:
         # обязателен отбор по кампусу — иначе приедут Пермь и Нижний Новгород.
         #
         # «СТАТИСТИКА ПОДАННЫХ ЗАЯВЛЕНИЙ» — соседний раздел с такими же
-        # ссылками на XLS, но это сводка по числу заявлений, а не список: кодов
-        # поступающих в ней нет. Отсеиваем по названию раздела, чтобы не качать
-        # её впустую. Заголовок страницы («Статистика и списки…») под это
-        # правило не подпадает — иначе не осталось бы ни одной ссылки.
+        # ссылками на XLS. Списком он не является (кодов поступающих в нём
+        # нет), поэтому из списков исключён, — но именно в нём лежит КЦП по
+        # каждой программе, которого нет в самих списках. Поэтому он
+        # скачивается отдельно, как справочник мест.
         return _spec(university, url, depth=1, required=(HSE_CAMPUSES,),
-                     excluded=(r"статистика поданных",), note=_NOTES[HSE])
+                     list_excluded=(_HSE_SUMMARY,), seats_required=(_HSE_SUMMARY,),
+                     note=_NOTES[HSE])
 
     # МГУ и РАНХиГС — федерации факультетов и филиалов, до списка три клика.
     depth = 3 if university in (MSU, RANEPA) else 2

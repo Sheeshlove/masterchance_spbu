@@ -27,6 +27,7 @@ from app.infrastructure.parser.base import (
 )
 from app.infrastructure.parser.openlists.crawl import Fetched, fetch, find_links
 from app.infrastructure.parser.openlists.records import (
+    UNKNOWN_SPECIALITY,
     ProgramFacts,
     is_paid,
     json_rows_to_applications,
@@ -36,7 +37,12 @@ from app.infrastructure.parser.openlists.records import (
     program_facts,
     table_to_applications,
 )
-from app.infrastructure.parser.openlists.sheets import tables_from
+from app.infrastructure.parser.openlists.seats import (
+    ProgramSeats,
+    build_seats_map,
+    seats_key,
+)
+from app.infrastructure.parser.openlists.sheets import rows_from, tables_from
 
 _MSK = ZoneInfo("Europe/Moscow")
 
@@ -54,6 +60,10 @@ class SourceSpec:
     link_required — каждая регулярка обязана найтись в разделе, подписи или
                     адресе ссылки. Так отбираются нужные кампусы и очная форма.
     link_excluded — ни одна не должна найтись: заочное, платное, чужие города.
+    list_excluded — то же, но только для списков: сводка со статистикой стоит
+                    в соседнем разделе и списком не является.
+    seats_required — по каким ссылкам лежит сводка с числом мест. Пусто —
+                    значит, число мест берётся только из самого списка.
     json_ref_template — если оглавление приходит JSON-ответом API: шаблон
                     адреса списка, куда подставится найденный идентификатор.
     """
@@ -63,6 +73,8 @@ class SourceSpec:
     index_pattern: str | None = None
     link_required: tuple[str, ...] = ()
     link_excluded: tuple[str, ...] = ()
+    list_excluded: tuple[str, ...] = ()
+    seats_required: tuple[str, ...] = ()
     follow_depth: int = 1
     json_ref_template: str | None = None
     max_lists: int = 400
@@ -86,6 +98,49 @@ class OpenListsSource(IUniversitySource):
         self.spec = spec
         self.university = spec.university
         self._timeout = timeout
+        self._seats: dict[tuple[str, str], ProgramSeats] | None = None
+
+    # ── справочник мест ────────────────────────────────────────────────────
+    def seats(self) -> dict[tuple[str, str], ProgramSeats]:
+        """
+        {(кампус, программа): места} из сводки вуза.
+
+        Загружается лениво и один раз на экземпляр: у ВШЭ это два файла на все
+        180 программ, а в самих списках числа мест нет вовсе — без сводки шанс
+        считать не на чем.
+        """
+        if self._seats is not None:
+            return self._seats
+
+        self._seats = {}
+        if not self.spec.seats_required:
+            return self._seats
+
+        tables: list[tuple[str, list[list[str]]]] = []
+        for url in self._seats_urls():
+            try:
+                tables.extend(rows_from(fetch(url, timeout=self._timeout)))
+            except Exception as exc:  # noqa: BLE001 — без сводки просто не будет мест
+                logger.warning("[%s] Сводка с местами недоступна (%s): %s",
+                               self.university, url, exc)
+        self._seats = build_seats_map(tables)
+        return self._seats
+
+    def _seats_urls(self) -> list[str]:
+        urls: list[str] = []
+        for index_url in self.spec.index_urls:
+            try:
+                page = fetch(index_url, timeout=self._timeout)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] Оглавление недоступно (%s): %s",
+                               self.university, index_url, exc)
+                continue
+            urls.extend(link.url for link in find_links(
+                page.body, index_url, self.spec.list_pattern,
+                required=self.spec.link_required + self.spec.seats_required,
+                excluded=self.spec.link_excluded,
+            ))
+        return urls
 
     # ── discovery ──────────────────────────────────────────────────────────
     def discover(self) -> list[ProgramListing]:
@@ -115,7 +170,8 @@ class OpenListsSource(IUniversitySource):
                     continue
 
                 for link in find_links(page.body, url, spec.list_pattern,
-                                       spec.link_required, spec.link_excluded):
+                                       spec.link_required,
+                                       spec.link_excluded + spec.list_excluded):
                     found.setdefault(link.url, link.text)
                 if depth + 1 < spec.follow_depth and spec.index_pattern:
                     # Вглубь ходим по тем же запретам (не заходим в чужие
@@ -214,13 +270,31 @@ class OpenListsSource(IUniversitySource):
         сливаем здесь, а не оставляем на upsert: иначе вторая таблица молча
         затрёт первую.
         """
+        seats = self.seats()
         merged: dict[str, ParsedProgram] = {}
         for item in programs:
             facts = item.facts
             if not facts.program_name:
                 continue
+
+            # Число мест: сначала своё (если вуз печатает его над списком),
+            # иначе из сводки. Направление тоже уточняем по ней: в шапке
+            # списка его может не быть, а в сводке программы разложены по
+            # направлениям.
+            known = seats.get(seats_key(facts.campus, facts.program_name))
+            if known:
+                facts.num_places = facts.num_places or known.places
+                if facts.speciality_code == UNKNOWN_SPECIALITY:
+                    facts.speciality_code = known.speciality_code
+            elif seats and not facts.num_places:
+                logger.warning("[%s] Мест не нашлось в сводке: %s (%s)",
+                               self.university, facts.program_name, facts.campus or "—")
+
+            # Кампус — часть имени конкурса: «Дизайн» в Москве и «Дизайн» в
+            # Петербурге это разные наборы с разным числом мест.
+            name = facts.display_name
             code = stable_program_code(
-                self.university, facts.speciality_code, facts.program_name, facts.education_form,
+                self.university, facts.speciality_code, name, facts.education_form,
             )
             existing = merged.get(code)
             applications = [
@@ -231,10 +305,10 @@ class OpenListsSource(IUniversitySource):
             if existing is None:
                 merged[code] = ParsedProgram(
                     program_code=code,
-                    program_name=facts.program_name,
+                    program_name=name,
                     speciality_code=facts.speciality_code,
                     education_form=facts.education_form,
-                    is_international="ждунар" in facts.program_name.lower(),
+                    is_international="ждунар" in name.lower(),
                     stats=make_stats(code, facts.num_places, applications,
                                      item.generated_at or generated_at),
                     applications=applications,

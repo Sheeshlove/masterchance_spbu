@@ -1,4 +1,5 @@
 # repositories/program_repository.py
+import re
 from datetime import datetime
 from typing import Dict, Iterable, List, Sequence
 
@@ -19,6 +20,19 @@ from app.infrastructure.db.models import (
     SubmissionStatsModel, ApplicantModel, ApplicationModel, ProgramQuantileModel, AdmissionProbabilityModel,
     AdmissionDiagnosticsModel, ExamSessionModel
 )
+
+
+#: Статусы, которыми вуз говорит «результат ещё не окончательный». ВШЭ пишет
+#: «Ожидание результатов ВИ» и «На рассмотрении», пока идут испытания; СПбГУ в
+#: окончательных списках — «Участвует в конкурсе», и под это правило не
+#: подпадает.
+_PENDING_STATUS = re.compile(
+    r"ожидан|на рассмотрении|не проверен|проверяется|допущен к|не сдан", re.I
+)
+
+
+def _results_pending(status: str | None) -> bool:
+    return bool(status) and bool(_PENDING_STATUS.search(status))
 
 
 class ProgramRepository:
@@ -433,6 +447,7 @@ class ProgramRepository:
                 ApplicationModel.total_score,
                 ApplicationModel.priority,
                 ApplicationModel.consent,
+                ApplicationModel.review_status,
             )
             .filter(ApplicationModel.program_code.in_(codes))
             .all()
@@ -480,6 +495,7 @@ class ProgramRepository:
                 my_priority=int(mine.priority) if mine else None,
                 my_total_score=my_score or None,
                 my_consent=bool(mine.consent) if mine else False,
+                pending_results=sum(1 for r in prog_rows if _results_pending(r.review_status)),
             )
         return result
 

@@ -22,13 +22,15 @@ import pytest
 from app.infrastructure.parser.base import ProgramListing
 from app.infrastructure.parser.openlists import source as source_module
 from app.infrastructure.parser.openlists.crawl import Fetched, find_links, sniff_binary
-from app.infrastructure.parser.openlists.sheets import read_xlsx, tables_from
+from app.infrastructure.parser.openlists.sheets import read_xlsx, rows_from, tables_from
 from app.infrastructure.parser.openlists.source import OpenListsSource
 from app.infrastructure.parser.openlists.specs import default_spec
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "openlists"
 _PAGE = (_FIXTURES / "hse_magstats.html").read_text(encoding="utf-8")
 _XLSX = (_FIXTURES / "hse_program_list.xlsx").read_bytes()
+_SUMMARY_MSK = (_FIXTURES / "hse_summary_msk.xls").read_bytes()
+_SUMMARY_SPB = (_FIXTURES / "hse_summary_spb.xls").read_bytes()
 _PAGE_URL = "https://priem45.hse.ru/magstats.html"
 
 
@@ -121,7 +123,7 @@ def _parse_file(pages) -> object:
 def test_applications_are_parsed_from_the_file(pages):
     program = _parse_file(pages)
 
-    assert program.program_name == "Анализ данных в биологии и медицине"
+    assert program.program_name == "Анализ данных в биологии и медицине (Москва)"
     assert program.speciality_code == "01.04.02"
     assert program.program_code.startswith("hse:01.04.02:")
     assert [a.applicant_id for a in program.applications] == [
@@ -195,16 +197,28 @@ def test_xls_that_is_really_html_still_works():
     assert tables and tables[0].rows
 
 
-@pytest.mark.skipif(find_spec("xlrd") is not None,
-                    reason="проверяем поведение именно без xlrd")
-def test_legacy_binary_xls_is_reported_not_silently_empty(caplog):
-    """Старый .xls без xlrd — понятная запись в логе, а не тишина."""
+@pytest.mark.skipif(find_spec("xlrd") is None, reason="xlrd входит в requirements.txt")
+def test_legacy_binary_xls_is_read(caplog):
+    """
+    Сводку с числом мест ВШЭ выкладывает в старом бинарном .xls — именно из-за
+    неё xlrd в зависимостях.
+    """
+    page = Fetched(url="https://example.edu/summary.xls", raw=_SUMMARY_MSK)
+
+    sheets = rows_from(page)
+
+    assert sheets and sheets[0][0] == "на 12.08.2026"
+    assert any("Анализ данных" in " ".join(row) for row in sheets[0][1])
+
+
+def test_broken_xls_is_reported_not_silently_empty(caplog):
+    """Битый файл — понятная запись в логе, а не тишина."""
     ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64
     page = Fetched(url="https://example.edu/list.xls", raw=ole)
 
     assert tables_from(page) == []
-    assert any("xlrd" in record.message for record in caplog.records), \
-        "источник обязан сказать, чего ему не хватает"
+    assert any("не читается" in record.message or "xlrd" in record.message
+               for record in caplog.records)
 
 
 def test_pdf_is_reported_not_silently_empty(caplog):
@@ -212,3 +226,64 @@ def test_pdf_is_reported_not_silently_empty(caplog):
 
     assert tables_from(page) == []
     assert any("PDF" in record.message for record in caplog.records)
+
+
+# ── число мест: его нет в списке, оно в сводке ──────────────────────────────
+def _with_summary(pages) -> None:
+    """Страница + обе сводки (Москва и Петербург), как на priem45."""
+    pages[_PAGE_URL] = _PAGE
+    pages["https://priem45.hse.ru/data/2026/08/14/stat_msk_ochn.xlsx"] = _SUMMARY_MSK
+    pages["https://priem45.hse.ru/data/2026/08/14/stat_spb_ochn.xlsx"] = _SUMMARY_SPB
+
+
+def test_seats_come_from_the_summary(pages):
+    """
+    В списке ВШЭ числа мест нет вовсе — оно лежит в сводке «Статистика
+    поданных заявлений». Без него шанс считать не на чем.
+    """
+    _with_summary(pages)
+    url = "https://priem45.hse.ru/36634049850_Budget.xlsx"
+    pages[url] = _XLSX
+
+    program = _hse().fetch(ProgramListing(ref=url, title="Анализ данных в биологии и медицине"))[0]
+
+    assert program.stats.num_places == 25
+
+
+def test_summary_is_read_but_never_becomes_a_program(pages):
+    """Сводка — не список: кодов поступающих в ней нет, программ из неё не делаем."""
+    _with_summary(pages)
+
+    seats = _hse().seats()
+    assert len(seats) == 4                       # три московские программы и питерский «Дизайн»
+    assert not any("итого" in name for _campus, name in seats)
+    assert not any("зарегистрирован" in name for _campus, name in seats)
+
+
+def test_same_program_in_two_campuses_stays_two_competitions(pages):
+    """
+    «Дизайн» есть и в Москве (30 мест), и в Петербурге (7). Это разные наборы,
+    и склеиться в один конкурс они не должны — иначе места одного кампуса
+    достанутся абитуриентам другого.
+    """
+    _with_summary(pages)
+    source = _hse()
+    seats = source.seats()
+
+    msk = seats[("москва", "дизайн")]
+    spb = seats[("санкт-петербург", "дизайн")]
+    assert (msk.places, spb.places) == (30, 7)
+
+    # и в коде программы кампус тоже различается
+    from app.domain.universities import stable_program_code
+    assert (stable_program_code("hse", "54.04.01", "Дизайн (Москва)")
+            != stable_program_code("hse", "54.04.01", "Дизайн (Санкт-Петербург)"))
+
+
+def test_summary_of_a_foreign_campus_is_not_downloaded(pages):
+    """Сводки Перми и Нижнего не нужны — их программы мы всё равно не берём."""
+    _with_summary(pages)
+    urls = _hse()._seats_urls()
+
+    assert all("nn_" not in url and "perm" not in url for url in urls)
+    assert all("ochno_zaochn" not in url for url in urls), "очно-заочка — другой конкурс"

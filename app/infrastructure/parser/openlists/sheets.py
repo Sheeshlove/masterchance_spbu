@@ -13,10 +13,12 @@
 а зависимость в проекте, который принципиально парсит стандартными
 средствами, не появляется.
 
-Чего файл может не быть:
-  • старый бинарный `.xls` (OLE2) — читается только через xlrd, и если её нет,
-    источник честно говорит об этом в логе, а не молчит;
-  • PDF — не поддерживается вовсе.
+Старый бинарный `.xls` (OLE2) стандартной библиотекой не берётся — для него
+нужен xlrd (он в requirements.txt). Именно в этом формате ВШЭ публикует сводку
+с числом мест, поэтому без него по ВШЭ не будет ни одного КЦП; если библиотеки
+в окружении нет, источник говорит об этом в логе, а не молчит.
+
+PDF не поддерживается вовсе — тоже с прямой записью в лог.
 """
 from __future__ import annotations
 
@@ -162,44 +164,54 @@ def _rows_to_table(name: str, rows: list[list[str]]) -> HtmlTable | None:
     )
 
 
-def read_xlsx(data: bytes) -> list[HtmlTable]:
-    """Файл .xlsx → по таблице на лист (листы без списка пропускаются)."""
+def read_xlsx_rows(data: bytes) -> list[tuple[str, list[list[str]]]]:
+    """Файл .xlsx → [(имя листа, строки)] без всякой интерпретации."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         return []
 
-    tables: list[HtmlTable] = []
+    out: list[tuple[str, list[list[str]]]] = []
     with archive:
         strings = _shared_strings(archive)
         for name, path in _sheet_paths(archive):
             try:
-                rows = _sheet_rows(archive, path, strings)
+                out.append((name, _sheet_rows(archive, path, strings)))
             except (KeyError, ElementTree.ParseError) as exc:
                 logger.warning("Лист %s не читается: %s", name, exc)
-                continue
-            table = _rows_to_table(name, rows)
-            if table:
-                tables.append(table)
-    return tables
+    return out
 
 
-def read_csv(text: str) -> list[HtmlTable]:
-    """CSV/TSV → одна таблица. Разделитель определяется по первой строке."""
+def read_xlsx(data: bytes) -> list[HtmlTable]:
+    """Файл .xlsx → по таблице на лист (листы без списка пропускаются)."""
+    tables = [_rows_to_table(name, rows) for name, rows in read_xlsx_rows(data)]
+    return [t for t in tables if t]
+
+
+def _csv_rows(text: str) -> list[list[str]]:
+    """CSV/TSV → строки. Разделитель определяется по началу файла."""
     sample = text[:4096]
     delimiter = max(";,\t", key=sample.count) if sample else ","
-    rows = [
+    return [
         [cell.strip() for cell in row]
         for row in csv.reader(io.StringIO(text), delimiter=delimiter)
         if any(cell.strip() for cell in row)
     ]
-    table = _rows_to_table("", rows)
+
+
+def read_csv(text: str) -> list[HtmlTable]:
+    """CSV/TSV → одна таблица со списком, если он там есть."""
+    table = _rows_to_table("", _csv_rows(text))
     return [table] if table else []
 
 
-def tables_from(page: Fetched) -> list[HtmlTable]:
+def rows_from(page: Fetched) -> list[tuple[str, list[list[str]]]]:
     """
-    Ответ сервера → таблицы, чем бы он ни оказался.
+    Ответ сервера → сырые строки, чем бы он ни оказался.
+
+    Нужны в двух видах: как рейтинговый список (tables_from) и как сводка с
+    числом мест (seats.py), а разбираются одинаково — поэтому чтение файла и
+    его истолкование разведены.
 
     Отдельный случай — файл с расширением .xls, внутри которого лежит обычный
     HTML: так выгружает половина вузовских систем, и по сигнатуре он от
@@ -208,10 +220,10 @@ def tables_from(page: Fetched) -> list[HtmlTable]:
     kind = sniff_binary(page.raw)
 
     if kind == "xlsx":
-        return read_xlsx(page.raw)
+        return read_xlsx_rows(page.raw)
 
     if kind == "xls":
-        return _read_legacy_xls(page)
+        return _read_legacy_xls_rows(page)
 
     if kind == "pdf":
         logger.warning(
@@ -223,19 +235,32 @@ def tables_from(page: Fetched) -> list[HtmlTable]:
 
     text = page.body
     if "<table" in text.lower() or "<html" in text.lower():
-        return extract_tables(text)
+        return [(t.page_title, [t.headers, *t.rows]) for t in extract_tables(text)]
     if page.url.lower().endswith((".csv", ".tsv")) or text.count(";") + text.count(",") > 10:
-        return read_csv(text)
-    return extract_tables(text)
+        return [("", _csv_rows(text))]
+    return [(t.page_title, [t.headers, *t.rows]) for t in extract_tables(text)]
 
 
-def _read_legacy_xls(page: Fetched) -> list[HtmlTable]:
-    """Старый бинарный .xls — только если в окружении есть xlrd."""
+def tables_from(page: Fetched) -> list[HtmlTable]:
+    """Ответ сервера → таблицы со списками (всё остальное отбрасывается)."""
+    # HTML разбираем напрямую: у extract_tables есть текст перед таблицей,
+    # а через сырые строки он бы потерялся.
+    if sniff_binary(page.raw) is None and (
+        "<table" in page.body.lower() or "<html" in page.body.lower()
+    ):
+        return extract_tables(page.body)
+
+    tables = [_rows_to_table(name, rows) for name, rows in rows_from(page)]
+    return [t for t in tables if t]
+
+
+def _read_legacy_xls_rows(page: Fetched) -> list[tuple[str, list[list[str]]]]:
+    """Старый бинарный .xls — через xlrd (ВШЭ выгружает сводки именно в нём)."""
     try:
-        import xlrd  # noqa: PLC0415 — необязательная зависимость
+        import xlrd  # noqa: PLC0415 — нужен только этой ветке разбора
     except ImportError:
         logger.warning(
-            "Список выгружен в старом формате .xls (%s). Чтобы его читать, "
+            "Файл выгружен в старом формате .xls (%s). Чтобы его читать, "
             "поставьте xlrd: pip install xlrd", page.url,
         )
         return []
@@ -246,13 +271,17 @@ def _read_legacy_xls(page: Fetched) -> list[HtmlTable]:
         logger.warning("Файл .xls не читается (%s): %s", page.url, exc)
         return []
 
-    tables: list[HtmlTable] = []
+    out: list[tuple[str, list[list[str]]]] = []
     for sheet in book.sheets():
-        rows = [
-            [str(sheet.cell_value(r, c)).strip() for c in range(sheet.ncols)]
+        out.append((sheet.name, [
+            [_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
             for r in range(sheet.nrows)
-        ]
-        table = _rows_to_table(sheet.name, rows)
-        if table:
-            tables.append(table)
-    return tables
+        ]))
+    return out
+
+
+def _cell(value) -> str:
+    """Ячейка .xls → строка. Числа приходят float'ами: 25.0 → «25»."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return re.sub(r"\s+", " ", str(value).replace("\xa0", " ")).strip()

@@ -258,3 +258,45 @@ def test_seats_published_bring_the_percentage_back(seed, forecast):
     seed.commit()
 
     assert forecast.execute("hse:A1").items[0].prob_cond == pytest.approx(0.42)
+
+
+def test_no_forecast_while_the_results_are_not_out(seed, forecast):
+    """
+    Модель исходит из того, что списки окончательные и ноль — это ноль. Пока
+    вуз не выставил баллы (у ВШЭ в разгар кампании это «Ожидание результатов
+    ВИ» почти у всех), нули означают «не проверено», и разыгрывать по ним
+    места — значит выдавать жребий за прогноз.
+    """
+    seed.program("hse:p1", name="Анализ данных", university="hse")
+    seed.stats("hse:p1", num_places=25)
+    seed.applicant("hse:A1", university="hse")
+    seed.application("hse:p1", "hse:A1", priority=1, review_status="Ожидание результатов ВИ")
+    for n in range(5):
+        seed.applicant(f"hse:B{n}", university="hse")
+        seed.application("hse:p1", f"hse:B{n}", priority=1,
+                         review_status="Ожидание результатов ВИ")
+    seed.probability("hse:A1", "hse:p1", 0.31)
+    seed.diagnostics("hse:A1", p_excluded=0.0, p_fail_when_included=0.69)
+    seed.commit()
+
+    item = forecast.execute("hse:A1").items[0]
+
+    assert item.prob_cond is None, "жребий среди нулей — не прогноз"
+    assert item.q90 is None and item.q95 is None, "проходной по нулям тоже выдумка"
+    assert any("Баллы ещё не выставлены" in r.text for r in item.reasons)
+    assert not any("Списки окончательные" in r.text for r in item.reasons), \
+        "нельзя обещать окончательность списка, пока идут испытания"
+
+
+def test_finished_lists_still_get_their_forecast(seed, forecast):
+    """У СПбГУ статус «Участвует в конкурсе» — списки окончательные, всё как было."""
+    seed.program("spbgu:p1", name="Матмод")
+    seed.stats("spbgu:p1", num_places=10)
+    seed.applicant("spbgu:A1")
+    seed.application("spbgu:p1", "spbgu:A1", priority=1, total_score=90, vi_score=90,
+                     review_status="Участвует в конкурсе")
+    seed.probability("spbgu:A1", "spbgu:p1", 0.42)
+    seed.diagnostics("spbgu:A1", p_excluded=0.0, p_fail_when_included=0.58)
+    seed.commit()
+
+    assert forecast.execute("spbgu:A1").items[0].prob_cond == pytest.approx(0.42)

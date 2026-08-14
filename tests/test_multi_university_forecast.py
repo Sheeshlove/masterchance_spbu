@@ -177,3 +177,27 @@ def test_tab_explains_itself_when_the_university_has_no_seats(repo, seed, env):
     assert "не опубликовал" in html and "число мест" in html
     assert "Пролетел с магой" not in html
     assert "Анализ данных" in html, "сами заявки и баллы показать всё равно нужно"
+
+
+def test_tab_explains_itself_while_the_results_are_pending(repo, seed, env):
+    """Баллы ещё не выставлены — вкладка говорит об этом, а не показывает жребий."""
+    seed.program("hse:p1", name="Анализ данных", department_code="hse:01.04.02",
+                 university="hse")
+    seed.stats("hse:p1", num_places=25)
+    seed.applicant("hse:1000004", university="hse")
+    seed.application("hse:p1", "hse:1000004", priority=1,
+                     review_status="Ожидание результатов ВИ")
+    for n in range(3):
+        seed.applicant(f"hse:R{n}", university="hse")
+        seed.application("hse:p1", f"hse:R{n}", priority=1,
+                         review_status="Ожидание результатов ВИ")
+    seed.probability("hse:1000004", "hse:p1", 0.25)
+    seed.diagnostics("hse:1000004", p_excluded=0.0, p_fail_when_included=0.75)
+    seed.commit()
+
+    view = to_view(GetApplicantForecastUseCase(repo).execute_all("1000004"))
+    html = env.get_template("result.html").render(view=view, not_found=None)
+
+    assert view["groups"][0]["has_chances"] is False
+    assert "не выставил баллы" in html
+    assert "Пролетел с магой" not in html
