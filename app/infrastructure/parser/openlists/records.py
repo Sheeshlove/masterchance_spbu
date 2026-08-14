@@ -49,6 +49,12 @@ _PAID_RX = re.compile(r"платн|договор|контрактн|комме�
 _BUDGET_RX = re.compile(r"бюджет|за счет бюджетных|бесплатн|кцп", re.I)
 
 
+def _is_affirmative(value: Any) -> bool:
+    """«+» / «да» / «есть» → True. Пусто и «-» → False."""
+    text = str(value or "").strip().lower()
+    return text in {"+", "да", "есть", "true", "1", "✓"}
+
+
 def is_paid(text: str) -> bool:
     """
     Платная ли это строка/таблица.
@@ -89,7 +95,15 @@ def to_int(value: Any, default: int = 0) -> int:
 
 
 def parse_consent(value: Any) -> bool:
-    """«Да» / «+» / «Оригинал» → True. Пусто, «Нет», «—» → False."""
+    """
+    Отметка о согласии → True/False.
+
+    Вузы пишут её как угодно: «Да», «+», «Оригинал», дата подачи. ВШЭ ставит
+    букву «Б» — согласие на бюджетное место. Поэтому правило такое: пусто и
+    явные отрицания — нет, всё остальное заполненное — да. Заполненная клетка
+    в колонке «Согласие на зачисление» означает, что согласие подано; гадать,
+    какой именно буквой вуз это записал, бессмысленно.
+    """
     if isinstance(value, bool):
         return value
     text = str(value or "").strip().lower().replace("ё", "е")
@@ -97,8 +111,9 @@ def parse_consent(value: Any) -> bool:
         return True
     if text in _CONSENT_NO:
         return False
-    # Свободная формулировка: «согласие подано», «оригинал документа».
-    return bool(re.search(r"подан|оригинал|соглас|принят", text)) and not re.search(r"не\s+подан|отозв", text)
+    if re.search(r"не\s+подан|отозв|отказ|аннулир", text):
+        return False
+    return True
 
 
 def parse_places(text: str) -> int:
@@ -172,9 +187,24 @@ def program_facts(source_text: str, fallback_name: str = "") -> ProgramFacts:
 
 
 # ── строки → заявки ────────────────────────────────────────────────────────
+#: Как выглядит код поступающего: цифры, возможно с разделителями (СНИЛС
+#: «231-045-812 30»). Проверка нужна из-за подвалов: под таблицей ВШЭ идёт
+#: строка «Олимпиада студентов и выпускников «Высшая лига»», и без неё эта
+#: подпись становилась абитуриентом с нулевым баллом.
+_APPLICANT_ID_RX = re.compile(r"^[\w][\w\-/ .№]{0,39}$")
+
+
+def _looks_like_applicant_id(value: str) -> bool:
+    return bool(value) and bool(_APPLICANT_ID_RX.match(value)) and any(c.isdigit() for c in value)
+
+
 def _application(rec: dict[str, Any], program_code: str) -> Application | None:
     applicant_id = str(rec.get("applicant_id") or "").strip()
-    if not applicant_id or not re.search(r"\w", applicant_id):
+    if not _looks_like_applicant_id(applicant_id):
+        return None
+
+    # Документы забраны — человек выбыл из конкурса, местом он не претендует.
+    if _is_affirmative(rec.get("withdrawn")):
         return None
 
     vi = to_int(rec.get("vi_score"))
@@ -295,8 +325,8 @@ _RU_MONTHS = {
 #: Слова, которыми вузы подписывают дату публикации. Дата без такой подписи
 #: почти всегда чужая (срок подачи, дата приказа), и брать её нельзя.
 _WHEN_RX = re.compile(
-    r"(?:по состоянию на|сформирован\w*|актуальн\w* на|обновлен\w*|дата формирования|"
-    r"последнее обновление)\D{0,20}?"
+    r"(?:по состоянию на|сформирован\w*|актуальн\w* на|обновлен\w*|"
+    r"(?:дата|время) формирования|последнее обновление)\D{0,20}?"
     r"(\d{1,2})[.\s]+(\d{1,2}|[а-яё]+)[.\s]+(\d{4})(?:\D{0,12}?(\d{1,2}):(\d{2}))?",
     re.I,
 )

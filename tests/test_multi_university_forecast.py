@@ -154,3 +154,26 @@ def test_single_university_still_renders_a_tab(repo, seed, env):
 
     assert html.count('class="tab-panel"') == 1
     assert "СПбГУ" in html
+
+
+def test_tab_explains_itself_when_the_university_has_no_seats(repo, seed, env):
+    """
+    «В 100% симуляций не прошёл никуда» — неправда, если считать было не на
+    чем. Вкладка должна сказать про отсутствие мест, а не пугать процентом.
+    """
+    seed.program("hse:p1", name="Анализ данных", department_code="hse:01.04.02",
+                 university="hse")
+    seed.applicant("hse:1000004", university="hse")
+    seed.application("hse:p1", "hse:1000004", priority=1, total_score=90, vi_score=90)
+    seed.stats("hse:p1", num_places=0)
+    seed.probability("hse:1000004", "hse:p1", 0.0)
+    seed.diagnostics("hse:1000004", p_excluded=0.0, p_fail_when_included=1.0)
+    seed.commit()
+
+    view = to_view(GetApplicantForecastUseCase(repo).execute_all("1000004"))
+    html = env.get_template("result.html").render(view=view, not_found=None)
+
+    assert view["groups"][0]["has_chances"] is False
+    assert "не опубликовал" in html and "число мест" in html
+    assert "Пролетел с магой" not in html
+    assert "Анализ данных" in html, "сами заявки и баллы показать всё равно нужно"

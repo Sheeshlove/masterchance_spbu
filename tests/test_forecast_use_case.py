@@ -224,3 +224,37 @@ def test_exam_state_finished_when_all_past(seed, forecast):
     assert exam.state is ExamState.FINISHED
     assert exam.recently_finished is False
     assert exam.last_date is not None
+
+
+# ── вуз не опубликовал число мест ───────────────────────────────────────────
+def test_no_seats_means_no_percentage(seed, forecast):
+    """
+    Пока мест нет, конкурса не существует: модель раздаёт нули, и «0.0%»
+    выглядело бы посчитанным ответом. Так, например, устроены выгрузки ВШЭ —
+    числа мест в них нет вовсе.
+    """
+    seed.program("hse:p1", name="Анализ данных", university="hse")
+    seed.applicant("hse:A1", university="hse")
+    seed.application("hse:p1", "hse:A1", priority=1, total_score=90, vi_score=90)
+    seed.stats("hse:p1", num_places=0)          # вуз мест не объявил
+    seed.probability("hse:A1", "hse:p1", 0.0)   # Монте-Карло без мест даёт ноль
+    seed.diagnostics("hse:A1", p_excluded=0.0, p_fail_when_included=1.0)
+    seed.commit()
+
+    item = forecast.execute("hse:A1").items[0]
+
+    assert item.prob_cond is None, "без мест шанс показывать нечем — нужен прочерк"
+    assert any("мест" in r.text for r in item.reasons), \
+        "человеку надо объяснить, почему вместо процента прочерк"
+
+
+def test_seats_published_bring_the_percentage_back(seed, forecast):
+    seed.program("hse:p1", name="Анализ данных", university="hse")
+    seed.applicant("hse:A1", university="hse")
+    seed.application("hse:p1", "hse:A1", priority=1, total_score=90, vi_score=90)
+    seed.stats("hse:p1", num_places=25)
+    seed.probability("hse:A1", "hse:p1", 0.42)
+    seed.diagnostics("hse:A1", p_excluded=0.0, p_fail_when_included=0.58)
+    seed.commit()
+
+    assert forecast.execute("hse:A1").items[0].prob_cond == pytest.approx(0.42)

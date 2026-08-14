@@ -422,12 +422,21 @@ class GetApplicantForecastUseCase:
             prog = prog_map.get(code)
             q = quantiles.get(code)
             comp = competition.get(code)
+
+            # Пока вуз не опубликовал число мест, конкурса не существует:
+            # модель раздаёт нули, и «0.0%» выглядело бы посчитанным ответом,
+            # хотя считать было не на чем. Показываем прочерк — почему, сказано
+            # в объяснении под направлением.
+            probability = probs_cond.get(code)
+            if comp is not None and not comp.seats:
+                probability = None
+
             items.append(
                 ForecastItem(
                     program_code=code,
                     program_name=prog.name if prog else code,
                     department_code=_display_code(prog.department_code) if prog else code.split(".")[0],
-                    prob_cond=probs_cond.get(code),
+                    prob_cond=probability,
                     q90=q.q90 if q else None,
                     q95=q.q95 if q else None,
                     exam=_build_exam_status(apps_by_code.get(code), sessions_by_code.get(code, [])),

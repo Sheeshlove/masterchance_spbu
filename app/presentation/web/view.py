@@ -90,6 +90,10 @@ def group_view(result: ForecastResult) -> dict:
         "label": university_label(result.university) or "Вуз",
         "applicant_id": result.applicant_id,
         "fail_pct": f"{result.fail_cond * 100:.1f}%",
+        # Ни по одному направлению нет числа мест — считать было не на чем, и
+        # «в 100% симуляций не прошёл никуда» здесь означало бы не результат
+        # модели, а отсутствие данных у вуза.
+        "has_chances": any(it.prob_cond is not None for it in result.items),
         # ключ НЕ называем "items": в Jinja `view.items` резолвится в метод dict.items
         "programs": items,
         "notes": [n.text for n in result.notes],

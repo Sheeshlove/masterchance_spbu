@@ -7,8 +7,10 @@
 форма и только бюджет, поэтому проверяется не столько разбор, сколько отбор:
 лишний раздел, попавший в выдачу, — это чужой конкурс в общем списке.
 
-Фикстуры: hse_magstats.html повторяет структуру страницы (см. её комментарий),
-hse_program_list.xlsx сделан настоящим Excel-writer'ом, читается нашим.
+Фикстуры сняты с настоящих: hse_magstats.html повторяет структуру страницы,
+hse_program_list.xlsx — строение реальной выгрузки (шапка, парные «целевые»
+колонки, подвал про олимпиады). Коды поступающих в нём выдуманные: настоящие в
+открытый репозиторий класть незачем.
 """
 from __future__ import annotations
 
@@ -104,54 +106,82 @@ def test_xlsx_is_recognised_by_its_signature():
 def test_xlsx_sheet_becomes_a_table():
     table = read_xlsx(_XLSX)[0]
 
-    assert table.page_title == "Маркетинг"
-    assert "Уникальный" not in " ".join(table.headers)   # у ВШЭ колонка названа иначе
-    assert table.headers[1] == "Индивидуальный номер"
-    assert len(table.rows) == 4
-    # шапка над таблицей сохранилась — из неё берутся программа и места
-    assert "Маркетинг и рыночная аналитика" in table.preamble
-    assert "25" in table.preamble
+    assert table.headers[2] == "Уникальный код поступающего"
+    # шапка над таблицей сохранилась — из неё берутся программа и дата
+    assert "Анализ данных в биологии и медицине" in table.preamble
+    assert "Время формирования" in table.preamble
+
+
+def _parse_file(pages) -> object:
+    url = "https://priem45.hse.ru/36634049850_Budget.xlsx"
+    pages[url] = _XLSX
+    return _hse().fetch(ProgramListing(ref=url, title="Анализ данных в биологии и медицине"))[0]
 
 
 def test_applications_are_parsed_from_the_file(pages):
-    url = "https://priem45.hse.ru/data/2026/08/14/msk_marketing.xlsx"
-    pages[url] = _XLSX
+    program = _parse_file(pages)
 
-    programs = _hse().fetch(ProgramListing(ref=url, title="Маркетинг и рыночная аналитика"))
-
-    assert len(programs) == 1, "лист с платными местами не должен стать второй программой"
-    program = programs[0]
-    assert program.program_name == "Маркетинг и рыночная аналитика"
-    assert program.speciality_code == "38.04.02"
-    assert program.program_code.startswith("hse:38.04.02:")
-    assert program.stats.num_places == 25
-    assert [a.applicant_id for a in program.applications] == \
-        ["1000004", "1000117", "1000238", "1000411"]
+    assert program.program_name == "Анализ данных в биологии и медицине"
+    assert program.speciality_code == "01.04.02"
+    assert program.program_code.startswith("hse:01.04.02:")
+    assert [a.applicant_id for a in program.applications] == [
+        "9000001", "9000002", "9000003", "9000004", "9000005",
+    ]
 
     first = program.applications[0]
-    assert (first.total_score, first.vi_score, first.id_achievements) == (98, 93, 5)
-    assert first.priority == 1 and first.consent is True
-    assert program.applications[1].consent is False
+    assert first.total_score == 100
+    assert first.priority == 7
 
 
-def test_paid_sheet_of_the_same_file_is_not_taken(pages):
-    """В книге два листа: бюджет и платные места. Второй — другой конкурс."""
-    url = "https://priem45.hse.ru/data/2026/08/14/msk_marketing.xlsx"
-    pages[url] = _XLSX
+def test_target_quota_columns_do_not_clobber_the_real_ones(pages):
+    """
+    Рядом с «Приоритет бюджетного места» стоит пустой «Приоритет целевого
+    места», а рядом с «Сумма конкурсных баллов» — «…в рамках квоты на целевые
+    места». Обе подходят под общие правила, и, будучи прочитанными, обнуляли
+    приоритет и балл: у всех выходил приоритет 1.
+    """
+    program = _parse_file(pages)
 
-    programs = _hse().fetch(ProgramListing(ref=url, title="Маркетинг"))
-    codes = {a.applicant_id for p in programs for a in p.applications}
+    assert sorted(a.priority for a in program.applications) == [1, 2, 2, 7, 41]
+    assert program.applications[0].total_score == 100
 
-    assert "2000001" not in codes, "абитуриент с платного листа попал в бюджетный конкурс"
+
+def test_consent_marked_with_a_letter_is_still_consent(pages):
+    """ВШЭ ставит в колонке согласия букву «Б» — согласие на бюджетное место."""
+    program = _parse_file(pages)
+    consented = [a.applicant_id for a in program.applications if a.consent]
+
+    assert consented == ["9000003", "9000004"]
+
+
+def test_footer_line_does_not_become_an_applicant(pages):
+    """Под таблицей идёт подпись про зачёт олимпиад — это не абитуриент."""
+    program = _parse_file(pages)
+    codes = [a.applicant_id for a in program.applications]
+
+    assert not any("Олимпиада" in code for code in codes)
+    assert all(code.isdigit() for code in codes)
+
+
+def test_withdrawn_documents_leave_the_competition(pages):
+    """Забрал документы — на место не претендует и конкурентом больше не является."""
+    program = _parse_file(pages)
+
+    assert "9000006" not in [a.applicant_id for a in program.applications]
 
 
 def test_publication_date_comes_from_the_file_header(pages):
-    url = "https://priem45.hse.ru/data/2026/08/14/msk_marketing.xlsx"
-    pages[url] = _XLSX
+    program = _parse_file(pages)
+    assert program.stats.generated_at.strftime("%d.%m.%Y %H:%M") == "12.08.2026 15:39"
 
-    program = _hse().fetch(ProgramListing(ref=url))[0]
 
-    assert program.stats.generated_at.strftime("%d.%m.%Y") == "14.08.2026"
+def test_seats_are_not_invented_when_the_file_has_none(pages):
+    """
+    Числа мест в выгрузке ВШЭ нет вовсе. Ноль здесь — это «неизвестно», и
+    придумывать его нельзя: по нему считается весь конкурс.
+    """
+    program = _parse_file(pages)
+    assert program.stats.num_places == 0
 
 
 # ── формат файла ───────────────────────────────────────────────────────────

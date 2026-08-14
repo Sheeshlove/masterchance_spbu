@@ -76,10 +76,18 @@
             {% endfor %}
           </div>
 
+          {% if g.has_chances %}
           <div class="fail">
             <b>«Пролетел с магой»</b>: в <b>{{ g.fail_pct }}</b> симуляций не прошёл
             никуда{% if view.multi %} в {{ g.label }}{% endif %}.
           </div>
+          {% else %}
+          <div class="fail">
+            {{ g.label }} пока не опубликовал<b>&nbsp;число мест</b> ни по одному
+            вашему направлению — шанс считать не на чем. Заявки и баллы показаны,
+            прогноз появится, как только вуз объявит места.
+          </div>
+          {% endif %}
 
           {% if g.notes %}
           <div class="notes">

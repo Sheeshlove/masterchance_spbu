@@ -75,6 +75,8 @@ class _PageProgram:
     """Промежуточный результат: один конкурс, найденный на странице."""
     facts: ProgramFacts
     applications: list = field(default_factory=list)
+    #: Дата из шапки самого списка. У файла Excel она только там и есть.
+    generated_at: datetime | None = None
 
 
 class OpenListsSource(IUniversitySource):
@@ -178,7 +180,13 @@ class OpenListsSource(IUniversitySource):
             )
             applications = table_to_applications(table, program_code="")
             if applications:
-                out.append(_PageProgram(facts=facts, applications=applications))
+                out.append(_PageProgram(
+                    facts=facts,
+                    applications=applications,
+                    # «Время формирования: 12.08.2026 15:39» стоит в шапке
+                    # листа — для файла это единственное место, где она есть.
+                    generated_at=parse_generated_at(table.preamble),
+                ))
         return out
 
     def _from_json(self, page: Fetched, listing: ProgramListing) -> list[_PageProgram]:
@@ -227,7 +235,8 @@ class OpenListsSource(IUniversitySource):
                     speciality_code=facts.speciality_code,
                     education_form=facts.education_form,
                     is_international="ждунар" in facts.program_name.lower(),
-                    stats=make_stats(code, facts.num_places, applications, generated_at),
+                    stats=make_stats(code, facts.num_places, applications,
+                                     item.generated_at or generated_at),
                     applications=applications,
                 )
             else:
