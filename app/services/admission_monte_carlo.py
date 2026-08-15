@@ -179,6 +179,11 @@ class AdmissionMonteCarlo:
     источника неопределённости, которых в данных действительно нет:
       • жребий на равных баллах (jitter);
       • отток (opt-out) части абитуриентов без согласия в другие вузы.
+
+    `consent_elsewhere` — коды тех, кто подал согласие в ДРУГОЙ вуз. Раньше
+    такого знания не было и уход приходилось целиком угадывать по баллу; код
+    поступающего единый для всех вузов, поэтому теперь это наблюдаемый факт, и
+    для таких абитуриентов вероятность ухода берётся отдельная, высокая.
     """
 
     def __init__(self,
@@ -187,7 +192,8 @@ class AdmissionMonteCarlo:
                  submission_stats: pd.DataFrame,
                  *,
                  n_simulations: int = 10_000,
-                 random_seed: int | None = None):
+                 random_seed: int | None = None,
+                 consent_elsewhere: set[str] | None = None):
         self.n_sim = n_simulations
         self.rng = np.random.default_rng(random_seed)
 
@@ -241,20 +247,38 @@ class AdmissionMonteCarlo:
         )
 
         # --- Отток в другие вузы (opt-out) ----------------------------------
-        # Модель (см. config.py): из пула E (абитуриенты без согласия НИГДЕ)
-        # в каждой симуляции часть «уходит» с вероятностью ∝ перцентиль
-        # балла^alpha; ожидаемая доля ушедших ≈ opt_out_ratio. Уход
-        # освобождает места и поднимает шансы оставшихся; собственный уход
-        # абитуриента уводится в p_excluded.
+        # Из пула E (абитуриенты без согласия В ЭТОМ вузе) в каждой симуляции
+        # часть «уходит»; уход освобождает места и поднимает шансы оставшихся, а
+        # собственный уход абитуриента уводится в p_excluded.
+        #
+        # Пул делится надвое, и это главное, что модель знает про отток:
+        #
+        #   • подал согласие в ДРУГОЙ вуз — уходит почти наверняка. Согласие
+        #     единовременно можно держать только одно, так что человек уже
+        #     выбрал, и здесь его место освободится. Это не догадка, а факт из
+        #     списков: код поступающего единый, и согласие видно во всех вузах;
+        #   • не подал нигде — старая сценарная оценка: вероятность ∝ перцентиль
+        #     балла^alpha, ожидаемая доля ушедших ≈ opt_out_ratio.
         self.opt_out_enabled = bool(settings.opt_out_enabled)
         self.opt_out_ratio = float(settings.opt_out_ratio)
         self.opt_out_alpha = float(settings.opt_out_alpha)
+        self.committed_leave = float(settings.opt_out_committed)
 
-        # consent на абитуриента: True, если согласие есть хотя бы по одной заявке
+        # consent на абитуриента: True, если согласие есть хотя бы по одной
+        # заявке В ЭТОМ вузе (модель считается по вузам отдельно).
         consent_rows = applications["consent"].to_numpy(copy=False).astype(bool)
         self.has_consent = np.zeros(self.n_applicants, dtype=bool)
         np.logical_or.at(self.has_consent, self.applicant_idx, consent_rows)
-        # пул выбывающих E: абитуриенты без согласия нигде
+
+        # Кто уже подал согласие в другом вузе.
+        self.committed_elsewhere = np.zeros(self.n_applicants, dtype=bool)
+        for applicant_id, index in self._applicant2idx.items():
+            if applicant_id in (consent_elsewhere or ()):
+                self.committed_elsewhere[index] = True
+        # Согласие здесь перевешивает: человек выбрал этот вуз.
+        self.committed_elsewhere &= ~self.has_consent
+
+        # пул выбывающих E: все без согласия в этом вузе
         self._optout_pool = np.where(~self.has_consent)[0].astype(np.int32)
 
         # Вероятности ухода считаются один раз: балл больше не меняется от
@@ -266,6 +290,10 @@ class AdmissionMonteCarlo:
             ability = np.zeros(self.n_applicants, np.float64)
             np.maximum.at(ability, self.applicant_idx, self.total_score.astype(np.float64))
             self._leave_prob = self._compute_leave_probs(ability[self._optout_pool])
+            # Тем, кто уже отдал согласие другому вузу, ставим свою, высокую
+            # вероятность — по перцентилю балла её угадывать больше не нужно.
+            committed = self.committed_elsewhere[self._optout_pool]
+            self._leave_prob[committed] = self.committed_leave
         else:
             self._leave_prob = np.zeros(0, np.float64)
 
@@ -273,9 +301,11 @@ class AdmissionMonteCarlo:
         self.present_count = np.zeros(self.n_applicants, np.float64)
 
         logger.info(
-            "   opt-out: %s; пул без согласия=%d/%d; ratio=%.2f, alpha=%.2f.",
+            "   opt-out: %s; пул без согласия=%d/%d (из них с согласием в другом "
+            "вузе=%d, уходят с p=%.2f); ratio=%.2f, alpha=%.2f.",
             "ON" if self.opt_out_enabled else "OFF",
             int(self._optout_pool.size), self.n_applicants,
+            int(self.committed_elsewhere.sum()), self.committed_leave,
             self.opt_out_ratio, self.opt_out_alpha,
         )
 

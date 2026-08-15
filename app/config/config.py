@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     # Крутизна зависимости шанса «уйти» от перцентиля конкурсного балла.
     # Вероятности пропорциональны p^alpha, где p — перцентиль, alpha>=1 (3 — агрессивнее).
     opt_out_alpha: float = Field(1.0, alias="MC_OPTOUT_STRENGTH")
+    # Вероятность ухода для тех, кто уже подал согласие в ДРУГОЙ вуз. Здесь мы
+    # не гадаем: согласие единовременно можно держать только одно, и человек им
+    # уже распорядился. Не 1.0 потому, что согласие отзывают и переподают —
+    # до конца кампании он может вернуться.
+    opt_out_committed: float = Field(0.9, alias="MC_CONSENT_ELSEWHERE_LEAVE")
 
     bot_show_anchored: bool = Field(True, alias="BOT_SHOW_ANCHORED")
 

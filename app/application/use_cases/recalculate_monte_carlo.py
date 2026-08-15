@@ -43,7 +43,10 @@ class RecalculateMonteCarloUseCase:
         return pd.DataFrame([r.__dict__ for r in recs])
 
     def _run_model(
-        self, applications: Sequence[Application], stats: Sequence[SubmissionStats]
+        self,
+        applications: Sequence[Application],
+        stats: Sequence[SubmissionStats],
+        consent_elsewhere: set[str],
     ) -> AdmissionMonteCarlo:
         apps_df = self._df_from_records(applications)
         stats_df = self._df_from_records(stats)
@@ -54,9 +57,19 @@ class RecalculateMonteCarloUseCase:
             submission_stats=stats_df,
             n_simulations=self._n_sim,
             random_seed=None,
+            consent_elsewhere=consent_elsewhere,
         )
         model.run_simulation()
         return model
+
+    @staticmethod
+    def _consent_by_university(applications: Sequence[Application]) -> dict[str, set[str]]:
+        """{вуз: коды тех, кто подал в нём согласие}."""
+        consented: dict[str, set[str]] = defaultdict(set)
+        for app in applications:
+            if app.consent:
+                consented[university_of_program(app.program_code) or _LEGACY].add(app.applicant_id)
+        return consented
 
     def execute(self) -> None:
         logger.info("→ Запуск Monte‑Carlo…")
@@ -72,6 +85,11 @@ class RecalculateMonteCarloUseCase:
         for row in stats:
             stats_by_uni[university_of_program(row.program_code) or _LEGACY].append(row)
 
+        # Кто где подал согласие. Держать его можно только одно, поэтому
+        # согласие в другом вузе — почти прямой ответ на вопрос «уйдёт ли он
+        # отсюда», который модель раньше могла только угадывать по баллу.
+        consented = self._consent_by_university(applications)
+
         quant_models: List[ProgramPassingQuantile] = []
         prob_models: List[AdmissionProbability] = []
         diag_models: List[AdmissionDiagnostics] = []
@@ -86,8 +104,19 @@ class RecalculateMonteCarloUseCase:
                 logger.warning("Monte‑Carlo [%s]: нет данных о местах — вуз пропущен.", label(uni))
                 continue
 
+            # Согласия могут быть собраны и по одному вузу — тогда для всех
+            # остальных это ровно тот сигнал, который нам нужен. Условия «а
+            # есть ли вообще несколько вузов» здесь быть не должно.
+            elsewhere: set[str] = set()
+            for other, codes in consented.items():
+                if other != uni:
+                    elsewhere |= codes
+            if elsewhere:
+                logger.info("Monte‑Carlo [%s]: подали согласие в другом вузе — %d человек",
+                            label(uni), len(elsewhere & {a.applicant_id for a in uni_apps}))
+
             try:
-                monte = self._run_model(uni_apps, uni_stats)
+                monte = self._run_model(uni_apps, uni_stats, elsewhere)
             except Exception as exc:  # noqa: BLE001 — один вуз не должен ронять пересчёт целиком
                 logger.exception("Monte‑Carlo [%s] не посчитался: %s", label(uni), exc)
                 continue

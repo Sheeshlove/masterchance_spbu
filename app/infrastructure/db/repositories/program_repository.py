@@ -14,7 +14,7 @@ from app.domain.models import (
     SubmissionStats, Applicant, Application, ProgramPassingQuantile, AdmissionProbability, AdmissionDiagnostics,
     ExamSession, ProgramCompetition
 )
-from app.domain.universities import candidate_applicant_keys
+from app.domain.universities import candidate_applicant_keys, university_of_program
 from app.infrastructure.db.models import (
     InstituteModel, DepartmentModel, ProgramModel,
     SubmissionStatsModel, ApplicantModel, ApplicationModel, ProgramQuantileModel, AdmissionProbabilityModel,
@@ -463,14 +463,22 @@ class ProgramRepository:
             .all()
         )
 
-        # Согласие подано хотя бы где-то — признак абитуриента, а не заявки.
-        consented = {
-            r[0]
-            for r in self._session.query(ApplicationModel.applicant_id)
+        # Согласие — признак абитуриента, а не заявки, и код у него единый на
+        # все вузы. Поэтому смотрим не только «подал ли где-нибудь», но и «в
+        # каком вузе»: согласие в другом вузе означает, что здесь человек
+        # почти наверняка место освободит.
+        consent_rows = (
+            self._session.query(ApplicationModel.applicant_id, ApplicationModel.program_code)
             .filter(ApplicationModel.consent.is_(True))
             .distinct()
             .all()
-        }
+        )
+        consented = {row[0] for row in consent_rows}
+        consent_universities: Dict[str, set] = {}
+        for consented_id, consented_program in consent_rows:
+            consent_universities.setdefault(consented_id, set()).add(
+                university_of_program(consented_program)
+            )
 
         seats = {
             m.program_code: m.num_places
@@ -486,6 +494,7 @@ class ProgramRepository:
 
         result: Dict[str, ProgramCompetition] = {}
         for code, prog_rows in by_code.items():
+            this_university = university_of_program(code)
             mine = next((r for r in prog_rows if r.applicant_id == applicant_id), None)
             my_score = int(mine.total_score) if mine and mine.total_score else 0
             rivals = [r for r in prog_rows if r.applicant_id != applicant_id]
@@ -501,6 +510,10 @@ class ProgramRepository:
                 unscored_rivals=len(rivals) - len(scored),
                 rivals_without_consent=sum(
                     1 for r in rivals if r.applicant_id not in consented
+                ),
+                rivals_committed_elsewhere=sum(
+                    1 for r in rivals
+                    if this_university not in consent_universities.get(r.applicant_id, {this_university})
                 ),
                 my_priority=int(mine.priority) if mine else None,
                 my_total_score=my_score or None,

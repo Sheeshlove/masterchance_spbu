@@ -393,3 +393,36 @@ def test_simulation_count_note_keeps_its_comma(seed, forecast):
 
     note = forecast.execute("A1").notes[0].text
     assert "10 000 смоделированных приёмных кампаний, в которых" in note
+
+
+def test_rival_committed_elsewhere_is_told_apart_from_the_undecided(seed, forecast):
+    """
+    Два разных факта, и путать их нельзя: согласие в другом вузе — наблюдение
+    («почти наверняка уйдёт»), отсутствие согласия — предположение модели
+    («часть уходит»). Соперник, посчитанный дважды, вводил бы в заблуждение.
+    """
+    seed.program("hse:p1", name="Экономика", department_code="hse:38.04.01", university="hse")
+    seed.program("spbgu:p1", name="Матмод", department_code="spbgu:01.04.02", university="spbgu")
+    seed.applicant("A1")
+    seed.application("hse:p1", "A1", total_score=200)
+
+    seed.applicant("R_ушёл")                       # согласие отдано СПбГУ
+    seed.application("hse:p1", "R_ушёл", total_score=210, consent=False)
+    seed.application("spbgu:p1", "R_ушёл", total_score=210, consent=True)
+
+    seed.applicant("R_думает")                     # не подал нигде
+    seed.application("hse:p1", "R_думает", total_score=205, consent=False)
+
+    seed.probability("A1", "hse:p1", 0.5)
+    seed.stats("hse:p1", num_places=1)
+    seed.commit()
+
+    item = forecast.execute("A1").items[0]
+    # Группы не пересекаются: у «ушедшего» согласие есть, просто не здесь.
+    assert item.competition.rivals_committed_elsewhere == 1
+    assert item.competition.rivals_without_consent == 1
+
+    texts = " ".join(r.text for r in item.reasons)
+    assert "1 из 3 конкурентов уже подали согласие в другой вуз" in texts
+    assert "1 из 3 конкурентов пока не подали согласие нигде" in texts, \
+        "про нерешившегося тоже надо сказать — это разные основания"
