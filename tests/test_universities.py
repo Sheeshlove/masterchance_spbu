@@ -12,7 +12,6 @@ import pytest
 from app.domain.universities import (
     SUPPORTED_UNIVERSITIES,
     UNIVERSITY_LABELS,
-    applicant_key,
     candidate_applicant_keys,
     display_code,
     label,
@@ -23,7 +22,6 @@ from app.domain.universities import (
     raw_applicant_id,
     split_codes,
     stable_program_code,
-    university_of_applicant,
     university_of_program,
 )
 
@@ -86,27 +84,29 @@ def test_unknown_prefix_is_not_taken_for_a_university():
 
 
 # ── коды абитуриентов ──────────────────────────────────────────────────────
-def test_applicant_key_separates_people_with_the_same_code():
-    assert applicant_key("spbgu", "1645144") != applicant_key("msu", "1645144")
-    assert university_of_applicant(applicant_key("msu", "1645144")) == "msu"
-    assert raw_applicant_id("msu:1645144") == "1645144"
+def test_the_code_is_looked_up_as_is():
+    """
+    Уникальный код поступающего единый: его выдаёт суперсервис, и во всех
+    вузах он один и тот же. Значит, и искать надо ровно его.
+    """
+    assert candidate_applicant_keys("1645144")[0] == "1645144"
 
 
-def test_raw_id_survives_a_code_without_prefix():
-    assert raw_applicant_id("1645144") == "1645144"
-
-
-def test_a_typed_code_is_looked_up_in_every_university():
+def test_legacy_snapshots_are_still_searched():
+    """
+    В снапшотах, собранных пока мы ошибочно считали коды вузовскими, они лежат
+    разложенными по вузам. Такие базы на дисках у людей — их код тоже обязан
+    находиться, поэтому варианты с префиксом идут следом.
+    """
     candidates = candidate_applicant_keys("1645144")
-    assert candidates[: len(SUPPORTED_UNIVERSITIES)] == [
-        f"{u}:1645144" for u in SUPPORTED_UNIVERSITIES
-    ]
-    # ...и как есть — ради снапшотов, собранных до разделения по вузам
-    assert candidates[-1] == "1645144"
+    assert candidates[1:] == [f"{u}:1645144" for u in SUPPORTED_UNIVERSITIES]
 
 
-def test_a_full_key_is_looked_up_as_is():
-    assert candidate_applicant_keys("hse:1645144") == ["hse:1645144"]
+def test_a_prefixed_code_is_reduced_to_the_bare_one():
+    """Код из старого снапшота приводится к настоящему, а не ищется как есть."""
+    assert candidate_applicant_keys("hse:1645144")[0] == "1645144"
+    assert raw_applicant_id("hse:1645144") == "1645144"
+    assert raw_applicant_id("1645144") == "1645144"
 
 
 def test_empty_input_looks_for_nothing():

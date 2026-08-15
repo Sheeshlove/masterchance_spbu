@@ -1,10 +1,10 @@
 """
-Поиск по коду в нескольких вузах и раскладка результата по вкладкам.
+Один код — вкладка на каждый вуз, куда человек подал документы.
 
-Код абитуриента вуз выдаёт свой, поэтому у одного человека их несколько, а один
-и тот же код может встретиться в двух вузах у разных людей. Ни то, ни другое не
-должно приводить к общему списку программ: у каждого вуза свой конкурс, свои
-места и свой «пролетел».
+Уникальный код поступающего единый для всех вузов, поэтому вводится он один, а
+заявки под ним лежат сразу по нескольким вузам. Смешивать их в общий список
+нельзя: у каждого вуза свой конкурс, свои места и свой «пролетел». Поэтому
+раскладка идёт по вузу ПРОГРАММЫ, а не по коду абитуриента.
 """
 from __future__ import annotations
 
@@ -23,28 +23,30 @@ _TEMPLATES = Path("app/presentation/web/templates").resolve()
 
 @pytest.fixture
 def two_universities(seed):
-    """Один человек с кодом 1000004 в СПбГУ и другой с тем же кодом в ВШЭ."""
+    """Один человек с кодом 1000004: заявка в СПбГУ и заявка в ВШЭ."""
+    seed.applicant("1000004")
+
     seed.program("spbgu:38.04.02:aaa", name="Матмод", department_code="spbgu:01.04.02",
                  university="spbgu")
-    seed.applicant("spbgu:1000004", university="spbgu")
-    seed.application("spbgu:38.04.02:aaa", "spbgu:1000004", priority=1, total_score=90,
+    seed.application("spbgu:38.04.02:aaa", "1000004", priority=1, total_score=90,
                      vi_score=90, consent=True)
     seed.stats("spbgu:38.04.02:aaa", num_places=10)
-    seed.probability("spbgu:1000004", "spbgu:38.04.02:aaa", 0.5)
-    seed.diagnostics("spbgu:1000004", p_excluded=0.0, p_fail_when_included=0.5)
+    seed.probability("1000004", "spbgu:38.04.02:aaa", 0.5)
+    seed.diagnostics("1000004", p_excluded=0.0, p_fail_when_included=0.5,
+                     university="spbgu")
 
     seed.program("hse:38.04.01:bbb", name="Прикладная экономика",
                  department_code="hse:38.04.01", university="hse")
-    seed.applicant("hse:1000004", university="hse")
-    seed.application("hse:38.04.01:bbb", "hse:1000004", priority=1, total_score=88,
+    seed.application("hse:38.04.01:bbb", "1000004", priority=1, total_score=88,
                      vi_score=88, consent=True)
     seed.stats("hse:38.04.01:bbb", num_places=15)
-    seed.probability("hse:1000004", "hse:38.04.01:bbb", 0.8)
-    seed.diagnostics("hse:1000004", p_excluded=0.0, p_fail_when_included=0.2)
+    seed.probability("1000004", "hse:38.04.01:bbb", 0.8)
+    seed.diagnostics("1000004", p_excluded=0.0, p_fail_when_included=0.2,
+                     university="hse")
     seed.commit()
 
 
-def test_one_code_found_in_two_universities_gives_two_forecasts(repo, two_universities):
+def test_one_code_gives_a_forecast_per_university(repo, two_universities):
     results = GetApplicantForecastUseCase(repo).execute_all("1000004")
 
     assert [r.university for r in results] == ["spbgu", "hse"]
@@ -55,9 +57,27 @@ def test_one_code_found_in_two_universities_gives_two_forecasts(repo, two_univer
 
 
 def test_forecasts_keep_their_own_fail_percentage(repo, two_universities):
+    """
+    «Пролетел» считается внутри вуза. Код у человека один, поэтому без вуза в
+    ключе диагностики прогон второго вуза затирал бы первый — и на обеих
+    вкладках стояло бы одно число.
+    """
     results = GetApplicantForecastUseCase(repo).execute_all("1000004")
     assert results[0].fail_cond == pytest.approx(0.5)
     assert results[1].fail_cond == pytest.approx(0.2)
+
+
+def test_chances_of_another_university_do_not_leak_into_the_tab(repo, two_universities):
+    """
+    Вероятности лежат под одним кодом на все вузы. В расклад вкладки должны
+    попадать только её собственные направления.
+    """
+    spbgu, hse = GetApplicantForecastUseCase(repo).execute_all("1000004")
+
+    assert [it.program_code for it in spbgu.items] == ["spbgu:38.04.02:aaa"]
+    assert [it.program_code for it in hse.items] == ["hse:38.04.01:bbb"]
+    assert spbgu.items[0].prob_cond == pytest.approx(0.5)
+    assert hse.items[0].prob_cond == pytest.approx(0.8)
 
 
 def test_prefix_is_not_shown_to_the_user(repo, two_universities):
@@ -66,15 +86,15 @@ def test_prefix_is_not_shown_to_the_user(repo, two_universities):
 
 
 def test_several_codes_at_once(repo, seed):
-    """У человека свой код в каждом вузе — поле принимает их через запятую."""
+    """Кодов можно ввести несколько — например, свой и товарища."""
     seed.program("spbgu:38.04.02:aaa", name="Матмод", department_code="spbgu:01.04.02",
                  university="spbgu")
-    seed.applicant("spbgu:1000004", university="spbgu")
-    seed.application("spbgu:38.04.02:aaa", "spbgu:1000004", priority=1)
+    seed.applicant("1000004")
+    seed.application("spbgu:38.04.02:aaa", "1000004", priority=1)
     seed.program("hse:38.04.01:bbb", name="Экономика", department_code="hse:38.04.01",
                  university="hse")
-    seed.applicant("hse:777", university="hse")
-    seed.application("hse:38.04.01:bbb", "hse:777", priority=1)
+    seed.applicant("777")
+    seed.application("hse:38.04.01:bbb", "777", priority=1)
     seed.commit()
 
     results = GetApplicantForecastUseCase(repo).execute_all("1000004, 777")
@@ -92,14 +112,14 @@ def test_single_code_lookup_still_works(repo, two_universities):
     assert result is not None and result.university == "spbgu"
 
 
-def test_legacy_snapshot_without_prefixes_is_still_found(repo, seed):
+def test_legacy_snapshot_with_prefixed_codes_is_still_found(repo, seed):
     """
-    Снапшоты, собранные до разделения по вузам, лежат у людей на дисках —
-    код без префикса обязан находиться и в них.
+    Снапшоты, собранные пока мы ошибочно раскладывали коды по вузам, лежат у
+    людей на дисках. Введённый код обязан находиться и в них.
     """
     seed.program("spbgu:p1", name="Матмод", department_code="spbgu:01.04.02")
-    seed.applicant("1037225")
-    seed.application("spbgu:p1", "1037225", priority=1)
+    seed.applicant("spbgu:1037225", university="spbgu")
+    seed.application("spbgu:p1", "spbgu:1037225", priority=1)
     seed.commit()
 
     results = GetApplicantForecastUseCase(repo).execute_all("1037225")
@@ -145,8 +165,8 @@ def test_programs_of_different_universities_are_not_mixed(repo, two_universities
 
 def test_single_university_still_renders_a_tab(repo, seed, env):
     seed.program("spbgu:p1", name="Матмод", department_code="spbgu:01.04.02")
-    seed.applicant("spbgu:1000004", university="spbgu")
-    seed.application("spbgu:p1", "spbgu:1000004", priority=1)
+    seed.applicant("1000004")
+    seed.application("spbgu:p1", "1000004", priority=1)
     seed.commit()
 
     view = to_view(GetApplicantForecastUseCase(repo).execute_all("1000004"))
@@ -163,11 +183,11 @@ def test_tab_explains_itself_when_the_university_has_no_seats(repo, seed, env):
     """
     seed.program("hse:p1", name="Анализ данных", department_code="hse:01.04.02",
                  university="hse")
-    seed.applicant("hse:1000004", university="hse")
-    seed.application("hse:p1", "hse:1000004", priority=1, total_score=90, vi_score=90)
+    seed.applicant("1000004")
+    seed.application("hse:p1", "1000004", priority=1, total_score=90, vi_score=90)
     seed.stats("hse:p1", num_places=0)
-    seed.probability("hse:1000004", "hse:p1", 0.0)
-    seed.diagnostics("hse:1000004", p_excluded=0.0, p_fail_when_included=1.0)
+    seed.probability("1000004", "hse:p1", 0.0)
+    seed.diagnostics("1000004", p_excluded=0.0, p_fail_when_included=1.0, university="hse")
     seed.commit()
 
     view = to_view(GetApplicantForecastUseCase(repo).execute_all("1000004"))
@@ -184,15 +204,15 @@ def test_tab_explains_itself_while_the_results_are_pending(repo, seed, env):
     seed.program("hse:p1", name="Анализ данных", department_code="hse:01.04.02",
                  university="hse")
     seed.stats("hse:p1", num_places=25)
-    seed.applicant("hse:1000004", university="hse")
-    seed.application("hse:p1", "hse:1000004", priority=1,
+    seed.applicant("1000004")
+    seed.application("hse:p1", "1000004", priority=1,
                      review_status="Ожидание результатов ВИ")
     for n in range(3):
-        seed.applicant(f"hse:R{n}", university="hse")
-        seed.application("hse:p1", f"hse:R{n}", priority=1,
+        seed.applicant(f"R{n}")
+        seed.application("hse:p1", f"R{n}", priority=1,
                          review_status="Ожидание результатов ВИ")
-    seed.probability("hse:1000004", "hse:p1", 0.25)
-    seed.diagnostics("hse:1000004", p_excluded=0.0, p_fail_when_included=0.75)
+    seed.probability("1000004", "hse:p1", 0.25)
+    seed.diagnostics("1000004", p_excluded=0.0, p_fail_when_included=0.75, university="hse")
     seed.commit()
 
     view = to_view(GetApplicantForecastUseCase(repo).execute_all("1000004"))

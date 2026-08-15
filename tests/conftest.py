@@ -116,10 +116,15 @@ class Seeder:
             )
         )
 
-    def diagnostics(self, applicant_id: str, p_excluded: float, p_fail_when_included: float) -> None:
+    def diagnostics(self, applicant_id: str, p_excluded: float, p_fail_when_included: float,
+                    university: str = "spbgu") -> None:
+        # Вуз — часть ключа: код абитуриента единый, а «пролетел» считается
+        # внутри конкурса, и у одного человека их столько, во сколько вузов он
+        # подал документы.
         self.session.add(
             AdmissionDiagnosticsModel(
                 applicant_id=applicant_id,
+                university=university,
                 p_excluded=p_excluded,
                 p_fail_when_included=p_fail_when_included,
             )

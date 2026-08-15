@@ -4,13 +4,13 @@
 <section class="hero">
   <h1>Посмотри свои шансы на магистратуру</h1>
   <p class="muted">Введи <b>код абитуриента</b> — покажем направления, шанс зачисления и ориентиры проходных баллов.
-    Код в каждом вузе свой: подавался в несколько — перечисли их через запятую,
-    и каждый вуз откроется на своей вкладке.</p>
+    Код единый для всех вузов, так что он нужен один: каждый вуз, куда ты подавался,
+    откроется на своей вкладке.</p>
 
   <form class="lookup" action="/" method="get"
         hx-get="/result" hx-target="#result" hx-swap="innerHTML" hx-indicator="#spin">
     <input type="text" name="code" value="{{ code }}"
-           placeholder="например, 1000004 или 1000004, 231-045-812 30"
+           placeholder="например, 1000004"
            autocomplete="off" autofocus>
     <button type="submit">Показать шансы</button>
     <span id="spin" class="htmx-indicator">…</span>

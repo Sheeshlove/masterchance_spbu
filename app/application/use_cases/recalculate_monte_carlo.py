@@ -104,6 +104,9 @@ class RecalculateMonteCarloUseCase:
             diag_models.extend(
                 AdmissionDiagnostics(
                     applicant_id=aid,
+                    # Вуз обязателен: код абитуриента единый, и без него прогон
+                    # следующего вуза затёр бы диагностику предыдущего.
+                    university=uni,
                     p_excluded=vals["p_excluded"],
                     p_fail_when_included=vals["p_fail_when_included"],
                 )

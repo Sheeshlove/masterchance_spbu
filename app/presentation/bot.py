@@ -155,7 +155,7 @@ def _render_all(results: List[ForecastResult]) -> str:
     blocks = []
     for result in results:
         title = university_label(result.university) or "Вуз"
-        blocks.append(f"🏛 *{title}* — код `{result.applicant_id}`\n{_render_forecast(result)}")
+        blocks.append(f"🏛 *{title}*\n{_render_forecast(result)}")
     return "\n\n————————————\n\n".join(blocks)
 
 
@@ -302,7 +302,7 @@ async def start_cmd(msg: Message):
     await msg.answer(
         dedent(f"""
         Привет! Отправь мне **код абитуриента** — покажу все направления, шанс зачисления и ориентиры проходных баллов.
-        Код в каждом вузе свой: если подавался в несколько, пришли их через запятую — по каждому будет свой раздел.
+        Код единый для всех вузов — нужен один: по каждому вузу, куда ты подавался, будет свой раздел.
 {hint}
         Последнее обновление данных: **{_fmt(last_dt)}**
 

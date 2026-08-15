@@ -24,7 +24,7 @@ from app.domain.universities import (
     display_code,
     raw_applicant_id,
     split_codes,
-    university_of_applicant,
+    university_of_program,
 )
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 
@@ -407,12 +407,15 @@ class GetApplicantForecastUseCase:
 
     def execute_all(self, codes: str) -> list[ForecastResult]:
         """
-        Прогнозы по всем вузам, где нашёлся введённый код (или коды).
+        Прогноз по каждому вузу, куда человек подал документы.
 
-        Кодов может быть несколько: свой код вуз выдаёт каждый, и человек,
-        подавшийся в СПбГУ и ВШЭ, вводит оба через запятую. Один код тоже
-        может найтись в двух вузах — это разные люди с совпавшим номером,
-        поэтому расклады не смешиваются, а возвращаются раздельно.
+        Код у абитуриента один на все вузы, поэтому и вводить нужно один. А вот
+        конкурсы разные: у каждого вуза свои места, свои приоритеты и свой
+        «пролетел», складывать их в общий список нельзя. Поэтому заявки
+        раскладываются по вузу ПРОГРАММЫ — он зашит в её код.
+
+        Несколько кодов через запятую тоже принимаются: посмотреть чужой
+        расклад или сравнить свой с товарищем.
 
         Порядок — как в SUPPORTED_UNIVERSITIES: вкладки на сайте не должны
         переставляться от запроса к запросу.
@@ -423,21 +426,41 @@ class GetApplicantForecastUseCase:
                 if key not in keys:
                     keys.append(key)
 
-        results = [r for r in (self._forecast(key) for key in keys) if r is not None]
+        results: list[ForecastResult] = []
+        for key in keys:
+            results.extend(self._forecasts_by_university(key))
+
         order = {uni: i for i, uni in enumerate(SUPPORTED_UNIVERSITIES)}
         return sorted(results, key=lambda r: order.get(r.university or "", len(order)))
 
-    def _forecast(self, applicant_id: str) -> ForecastResult | None:
-        all_codes = self._repo.get_program_codes_by_applicant(applicant_id)
+    def _forecasts_by_university(self, applicant_id: str) -> list[ForecastResult]:
+        """Заявки одного человека → по прогнозу на каждый вуз, куда он подал."""
+        by_university: dict[str, list[str]] = {}
+        for code in self._repo.get_program_codes_by_applicant(applicant_id):
+            by_university.setdefault(university_of_program(code) or "", []).append(code)
+
+        return [
+            result
+            for university, codes in by_university.items()
+            if (result := self._forecast(applicant_id, university, codes)) is not None
+        ]
+
+    def _forecast(
+        self, applicant_id: str, university: str, all_codes: list[str]
+    ) -> ForecastResult | None:
         if not all_codes:
             return None
 
+        # Только программы ЭТОГО вуза: у человека один код на все вузы, и
+        # вероятности по чужим конкурсам попали бы и в сумму, и в «пролетел».
         prob_objs = self._repo.get_probabilities_for_applicant(applicant_id)
-        probs_uncond = {p.program_code: p.probability for p in prob_objs}
+        probs_uncond = {
+            p.program_code: p.probability for p in prob_objs if p.program_code in set(all_codes)
+        }
 
         quantiles = self._repo.get_quantiles_for_programs(all_codes)
         prog_map = self._repo.get_programs_by_codes(all_codes)
-        diag = self._repo.get_diagnostics_for_applicant(applicant_id)
+        diag = self._repo.get_diagnostics_for_applicant(applicant_id, university)
 
         apps = self._repo.get_applications_by_applicant(applicant_id)
         apps_by_code = {a.program_code: a for a in apps if a.program_code in all_codes}
@@ -493,9 +516,9 @@ class GetApplicantForecastUseCase:
             )
 
         first = prog_map.get(all_codes[0])
-        # Вуз берём из ключа абитуриента: он проставлен при загрузке списков и
-        # не зависит от того, попала ли программа в каталог.
-        university = university_of_applicant(applicant_id) or (first.university if first else None)
+        # Вуз известен от вызывающего — он выведен из кода программы. Каталог
+        # тут запасной вариант: программы может не быть в нём вовсе.
+        university = university or (first.university if first else None)
 
         last_update = GetLastUpdateTimeUseCase(self._repo).execute()
 

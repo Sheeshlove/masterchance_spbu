@@ -1,11 +1,10 @@
 """
 Обновление нескольких вузов: данные не смешиваются, сбой одного не роняет остальные.
 
-Главная проверка здесь — про идентичность абитуриента. Код поступающего вуз
-выдаёт сам, и коды разных вузов пересекаются. Если положить их в базу как есть,
-абитуриент 1645144 из СПбГУ и абитуриент 1645144 из МГУ станут одной строкой,
-а Монте-Карло посчитает их одним человеком, который может занять место только
-где-то одном — и обоим занизит шанс.
+Главная проверка здесь — про идентичность. Уникальный код поступающего единый
+для всех вузов, поэтому 1645144 в СПбГУ и 1645144 в ВШЭ — один человек и одна
+строка в базе. Разделяются не абитуриенты, а конкурсы: вуз зашит в код
+программы, и по нему же расходятся заявки, места и вкладки.
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from app.application.use_cases.update_lists import UpdateApplicationListsUseCase
 from app.domain.models import Application, SubmissionStats
 from app.infrastructure.parser import runner as runner_module
 from app.infrastructure.parser.base import IUniversitySource, ParsedProgram, ProgramListing
-from app.domain.universities import stable_program_code
+from app.domain.universities import stable_program_code, university_of_program
 
 
 def _application(program_code: str, applicant_id: str, priority: int = 1) -> Application:
@@ -86,22 +85,23 @@ def _update(repo, university: str) -> int:
     return UpdateApplicationListsUseCase(repo=repo).execute_source(university, parallelism=1)
 
 
-def test_applicant_codes_are_separated_by_university(repo, sources):
-    """Один и тот же код в двух вузах — два разных человека."""
+def test_one_code_is_one_person_in_every_university(repo, sources):
+    """
+    Код единый, поэтому 1645144 в ВШЭ и в МГУ — один человек: одна строка
+    абитуриента и обе его заявки под ней. Раскладывать по вузам нужно не его,
+    а конкурсы.
+    """
     sources["hse"] = _StubSource("hse", [_program("hse", "Маркетинг", ["1645144"])])
     sources["msu"] = _StubSource("msu", [_program("msu", "Экономика", ["1645144"])])
 
     _update(repo, "hse")
     _update(repo, "msu")
 
-    assert len(repo.get_applications_by_applicant("hse:1645144")) == 1
-    assert len(repo.get_applications_by_applicant("msu:1645144")) == 1
-    # заявки не перемешались: у каждого своя программа
-    hse_codes = repo.get_program_codes_by_applicant("hse:1645144")
-    msu_codes = repo.get_program_codes_by_applicant("msu:1645144")
-    assert hse_codes and msu_codes and set(hse_codes).isdisjoint(msu_codes)
-    # и код без префикса теперь ничего не находит сам по себе
-    assert repo.get_applications_by_applicant("1645144") == []
+    codes = repo.get_program_codes_by_applicant("1645144")
+    assert len(codes) == 2, "обе заявки принадлежат одному человеку"
+    assert {university_of_program(c) for c in codes} == {"hse", "msu"}
+    # разложенных по вузам ключей больше не существует
+    assert repo.get_applications_by_applicant("hse:1645144") == []
 
 
 def test_catalogue_rows_carry_their_university(repo, sources):
@@ -136,14 +136,14 @@ def test_empty_source_aborts_without_touching_other_universities(repo, sources):
     """Пустой ответ вуза — почти всегда его сбой, а не «все забрали документы»."""
     sources["hse"] = _StubSource("hse", [_program("hse", "Маркетинг", ["1645144"])])
     _update(repo, "hse")
-    before = len(repo.get_applications_by_applicant("hse:1645144"))
+    before = len(repo.get_applications_by_applicant("1645144"))
 
     empty = _program("msu", "Экономика", [])
     sources["msu"] = _StubSource("msu", [empty])
     with pytest.raises(RuntimeError, match="ни по одной программе"):
         _update(repo, "msu")
 
-    assert len(repo.get_applications_by_applicant("hse:1645144")) == before
+    assert len(repo.get_applications_by_applicant("1645144")) == before
 
 
 def test_one_broken_source_does_not_stop_the_others(repo, sources):
@@ -168,4 +168,4 @@ def test_repeated_update_does_not_duplicate_programs(repo, sources):
     _update(repo, "ranepa")
 
     assert len(repo.get_programs_by_university("ranepa")) == 1
-    assert len(repo.get_applications_by_applicant("ranepa:5")) == 1
+    assert len(repo.get_applications_by_applicant("5")) == 1

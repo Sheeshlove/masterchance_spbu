@@ -5,10 +5,9 @@ from typing import Optional, Sequence
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config.logger import logger
-from app.domain.models import Application, Department, Institute, Program
+from app.domain.models import Department, Institute, Program
 from app.domain.universities import (
     SPBGU,
-    applicant_key,
     label,
     namespaced_department,
     namespaced_institute,
@@ -17,12 +16,6 @@ from app.domain.universities import (
 from app.infrastructure.db.repositories.program_repository import ProgramRepository
 from app.infrastructure.parser.base import IApplicationsParser
 from app.infrastructure.parser.parallel_master_parser import parse_programs_in_parallel
-
-
-def _namespaced(application: Application, university: str) -> Application:
-    """Заявка с кодом абитуриента, разведённым по вузам."""
-    application.applicant_id = applicant_key(university, application.applicant_id)
-    return application
 
 
 class UpdateApplicationListsUseCase:
@@ -139,12 +132,9 @@ class UpdateApplicationListsUseCase:
                     empty += 1
                     continue
 
-                # Код абитуриента уникален только внутри своего вуза, поэтому в
-                # базу он кладётся с префиксом. Иначе абитуриент 1645144 из
-                # СПбГУ и абитуриент 1645144 из МГУ стали бы одной строкой, а
-                # Монте-Карло посчитал бы их одним человеком.
-                applications = [_namespaced(a, uni) for a in applications]
-
+                # Код поступающего кладётся как есть: он единый для всех вузов,
+                # и 1645144 в СПбГУ и в ВШЭ — один человек. Разделяются не
+                # абитуриенты, а конкурсы: вуз зашит в код программы.
                 self._repo.delete_applications_by_program(code)
                 self._repo.add_applicants_bulk(
                     [a.applicant_id for a in applications], university=uni,

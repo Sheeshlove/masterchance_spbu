@@ -164,6 +164,7 @@ class ProgramRepository:
     def _to_diag_model(d: AdmissionDiagnostics) -> AdmissionDiagnosticsModel:
         return AdmissionDiagnosticsModel(
             applicant_id=d.applicant_id,
+            university=d.university,
             p_excluded=d.p_excluded,
             p_fail_when_included=d.p_fail_when_included,
         )
@@ -219,16 +220,25 @@ class ProgramRepository:
             for r in rows
         ]
 
-    def get_diagnostics_for_applicant(self, applicant_id: str) -> AdmissionDiagnostics | None:
-        r = (
-            self._session.query(AdmissionDiagnosticsModel)
-            .filter_by(applicant_id=applicant_id)
-            .one_or_none()
-        )
+    def get_diagnostics_for_applicant(
+        self, applicant_id: str, university: str | None = None
+    ) -> AdmissionDiagnostics | None:
+        """
+        Диагностика Монте-Карло по абитуриенту в конкретном вузе.
+
+        Без `university` вернётся первая попавшаяся строка — так ходят старые
+        снапшоты, где диагностика была одна на человека. Новый код всегда
+        указывает вуз: «пролетел» в СПбГУ и в ВШЭ — про разные конкурсы.
+        """
+        query = self._session.query(AdmissionDiagnosticsModel).filter_by(applicant_id=applicant_id)
+        if university:
+            query = query.filter(AdmissionDiagnosticsModel.university == university)
+        r = query.first()
         if not r:
             return None
         return AdmissionDiagnostics(
             applicant_id=r.applicant_id,
+            university=r.university,
             p_excluded=r.p_excluded,
             p_fail_when_included=r.p_fail_when_included,
         )

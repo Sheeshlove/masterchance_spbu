@@ -47,8 +47,12 @@ ProgramModel.stats = relationship('SubmissionStatsModel', uselist=False, back_po
 
 class ApplicantModel(Base):
     __tablename__ = 'applicants'
+    # Уникальный код поступающего. Он единый для всех вузов (его выдаёт
+    # суперсервис), поэтому здесь одна строка на человека, а не на его заявку
+    # в каждый вуз.
     id = Column(String, primary_key=True)
-    # Вуз-источник абитуриента (сейчас всегда 'spbgu')
+    # В чьих списках код встретился первым. Не «вуз абитуриента»: человек
+    # подаётся в несколько, и вуз определяется у ЗАЯВКИ — через код программы.
     university = Column(String, nullable=False, default='spbgu', server_default='spbgu', index=True)
 
 
@@ -115,6 +119,11 @@ class AdmissionProbabilityModel(Base):
 class AdmissionDiagnosticsModel(Base):
     __tablename__ = "admission_diagnostics"
     applicant_id = Column(String, ForeignKey("applicants.id"), primary_key=True)
+    # Часть ключа: Монте-Карло считается по вузам отдельно, а код абитуриента
+    # единый на все вузы. Без этой колонки прогон ВШЭ затирал бы диагностику
+    # СПбГУ у того же человека, и «пролетел с магой» на обеих вкладках
+    # показывало бы одно число.
+    university = Column(String, primary_key=True, default="spbgu", server_default="spbgu")
     p_excluded = Column(Float, nullable=False)  # доля симуляций, где был исключён
     p_fail_when_included = Column(Float, nullable=False)  # провал среди включённых
     applicant = relationship("ApplicantModel")
