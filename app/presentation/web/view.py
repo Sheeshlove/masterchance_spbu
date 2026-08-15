@@ -13,6 +13,7 @@ from app.application.use_cases.get_applicant_forecast import (
     ForecastResult,
     Reason,
     ReasonKind,
+    Strategy,
 )
 
 UNIVERSITY_LABELS = {"spbgu": "СПбГУ"}
@@ -59,6 +60,18 @@ def exam_view(exam: ExamStatus) -> dict:
     return {"cls": "done", "icon": "⚪", "text": f"Экзамены завершились (последняя дата: {last})", "warn": warn}
 
 
+def strategy_view(strategy: Strategy | None) -> dict | None:
+    """Выжимка «что делать» → контекст шаблона. None — блок просто не рисуем."""
+    if strategy is None:
+        return None
+    return {
+        "outlook": strategy.outlook.value,
+        "headline": strategy.headline,
+        "detail": strategy.detail,
+        "steps": [reason_view(s) for s in strategy.steps],
+    }
+
+
 def to_view(result: ForecastResult) -> dict:
     items = []
     for it in result.items:
@@ -82,6 +95,9 @@ def to_view(result: ForecastResult) -> dict:
         "applicant_id": result.applicant_id,
         "university": UNIVERSITY_LABELS.get(result.university or "", result.university or ""),
         "fail_pct": f"{result.fail_cond * 100:.1f}%",
+        # getattr, а не точка: десктоп читает снапшоты, собранные до появления
+        # выжимки, и падать из-за отсутствующего поля он не должен
+        "strategy": strategy_view(getattr(result, "strategy", None)),
         # ключ НЕ называем "items": в Jinja `view.items` резолвится в метод dict.items
         "programs": items,
         "notes": [n.text for n in result.notes],

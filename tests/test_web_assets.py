@@ -166,3 +166,4 @@ def test_htmx_is_served_locally():
     js = STATIC / "htmx.min.js"
     assert js.is_file(), "htmx не лежит в static"
     assert js.stat().st_size > 20_000, "файл htmx подозрительно мал"
+

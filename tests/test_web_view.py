@@ -170,3 +170,30 @@ def test_view_without_reasons_has_empty_lists():
     view = to_view(_result())
     assert view["programs"][0]["reasons"] == []
     assert view["notes"] == []
+
+
+# ── выжимка «как поступить» ──────────────────────────────────────────────────
+
+def test_strategy_missing_renders_nothing():
+    """
+    Снапшот на руках у десктоп-клиента может быть собран до появления выжимки.
+    Тогда блока просто нет — падать шаблон не должен.
+    """
+    assert to_view(_result())["strategy"] is None
+
+
+def test_strategy_is_flattened_for_the_template():
+    from app.application.use_cases.get_applicant_forecast import Outlook, Strategy
+
+    view = to_view(_result(strategy=Strategy(
+        outlook=Outlook.SAFE,
+        headline="Вы почти наверняка поступите.",
+        detail="Шанс — 96%.",
+        steps=[Reason(ReasonKind.GOOD, "Согласие подано.")],
+    )))["strategy"]
+
+    assert view["outlook"] == "safe"          # класс подсветки блока
+    assert view["headline"].startswith("Вы почти")
+    assert view["steps"] == [
+        {"cls": "good", "icon": "▲", "text": "Согласие подано."}
+    ]

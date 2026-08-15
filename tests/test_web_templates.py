@@ -36,7 +36,7 @@ def env():
     return e
 
 
-def _result(reasons=None, notes=None) -> ForecastResult:
+def _result(reasons=None, notes=None, strategy=None) -> ForecastResult:
     return ForecastResult(
         applicant_id="A1",
         university="spbgu",
@@ -53,6 +53,7 @@ def _result(reasons=None, notes=None) -> ForecastResult:
         fail_cond=0.56,
         last_update=None,
         notes=notes or [],
+        strategy=strategy,
     )
 
 
@@ -92,3 +93,57 @@ def test_how_page_answers_the_cutoff_question(env):
 
     assert "Понижается ли проходной" in html
     assert "самого слабого из зачисленных" in html
+
+
+# ── выжимка «как поступить» ──────────────────────────────────────────────────
+
+def _strategy(**kw):
+    from app.application.use_cases.get_applicant_forecast import Outlook, Strategy
+
+    base = dict(
+        outlook=Outlook.SAFE,
+        headline="Вы почти наверняка поступите — скорее всего на направление «Матмод».",
+        detail="Шанс поступить хоть куда-нибудь — 96%.",
+        steps=[
+            Reason(ReasonKind.GOOD, "Согласие подано — в конкурсе вы остаётесь."),
+            Reason(ReasonKind.NEUTRAL, "Приоритеты расставляйте по настоящему желанию."),
+        ],
+    )
+    base.update(kw)
+    return Strategy(**base)
+
+
+def test_strategy_meets_the_reader_before_the_cards(env):
+    """
+    Человек приходит с вопросом «что мне делать», а карточки отвечают на
+    «какой у меня шанс здесь». Значит, выжимка должна идти первой.
+    """
+    html = env.get_template("result.html").render(
+        view=to_view(_result(strategy=_strategy())), not_found=None,
+    )
+
+    assert "Как поступить" in html
+    assert "почти наверняка поступите" in html
+    assert "Согласие подано" in html
+    assert html.index('class="plan') < html.index('class="cards"'), (
+        "выжимка оказалась ниже карточек"
+    )
+
+
+def test_outlook_reaches_the_markup_as_a_modifier(env):
+    """Тон блока задаёт CSS по outlook — сам текст готовит use case."""
+    from app.application.use_cases.get_applicant_forecast import Outlook
+
+    html = env.get_template("result.html").render(
+        view=to_view(_result(strategy=_strategy(outlook=Outlook.LONGSHOT))),
+        not_found=None,
+    )
+    assert "plan-longshot" in html
+
+
+def test_page_without_strategy_still_renders(env):
+    """Снапшот десктоп-клиента может быть собран до появления выжимки."""
+    html = env.get_template("result.html").render(view=to_view(_result()), not_found=None)
+
+    assert 'class="plan' not in html
+    assert 'class="cards"' in html, "карточки должны остаться на месте"

@@ -140,9 +140,27 @@ def _render_reasons(reasons: List[Reason], indent: str = "   ") -> List[str]:
     return [f"{indent}{_REASON_ICONS[r.kind]} {r.text}" for r in reasons]
 
 
+def _render_strategy(result: ForecastResult) -> List[str]:
+    """
+    Выжимка «как поступить» — самым первым, до списка направлений.
+
+    getattr, а не точка: поле появилось позже, и старый снапшот у кого-то на
+    руках не должен ронять ответ.
+    """
+    strategy = getattr(result, "strategy", None)
+    if strategy is None:
+        return []
+
+    lines = ["🎯 *Как поступить*", strategy.headline, f"_{strategy.detail}_"]
+    lines.extend(_render_reasons(strategy.steps, indent=""))
+    lines.append("")
+    return lines
+
+
 def _render_forecast(result: ForecastResult) -> str:
     """
     Рендер структуры прогноза в Markdown:
+      0) 🎯 Выжимка: чем всё кончится и что делать.
       1) Направления + строка про экзамены (баллы/даты).
       2) 🔮 Прогноз зачисления: вероятность, проходной и почему шанс такой.
       3) Блок про «пролёт» + общие пояснения к модели.
@@ -176,7 +194,12 @@ def _render_forecast(result: ForecastResult) -> str:
         tail.append("\nℹ️ *Как читать эти числа*")
         tail.extend(f"• {n.text}" for n in result.notes)
 
-    return "\n".join([head_programs, *prog_lines, head_forecast, *forecast_lines, head_fail, *tail])
+    return "\n".join([
+        *_render_strategy(result),
+        head_programs, *prog_lines,
+        head_forecast, *forecast_lines,
+        head_fail, *tail,
+    ])
 
 
 async def how_cmd(msg: Message):

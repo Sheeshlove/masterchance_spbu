@@ -10,6 +10,24 @@
       {% if view.university %}<span class="badge">{{ view.university }}</span>{% endif %}
     </div>
 
+    {% if view.strategy %}
+    <section class="plan plan-{{ view.strategy.outlook }}">
+      <b class="plan-label">Как поступить</b>
+      <p class="plan-headline">{{ view.strategy.headline }}</p>
+      <p class="plan-detail">{{ view.strategy.detail }}</p>
+      {% if view.strategy.steps %}
+      <ul class="plan-steps">
+        {% for s in view.strategy.steps %}
+        <li class="plan-step why-{{ s.cls }}">
+          <span class="why-icon">{{ s.icon }}</span>
+          <span class="why-text">{{ s.text }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
     <div class="cards">
       {% for it in view.programs %}
       <article class="card">

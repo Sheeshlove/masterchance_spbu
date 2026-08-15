@@ -461,6 +461,17 @@ class DesktopApp:
                     "fresh",
                 )
 
+            # Выжимка «как поступить» — до списка направлений.
+            # getattr: снапшот на руках может быть старее этого поля.
+            strategy = getattr(result, "strategy", None)
+            if strategy is not None:
+                self.out.insert("end", "КАК ПОСТУПИТЬ\n", "why_head")
+                self.out.insert("end", f"{strategy.headline}\n", "prog")
+                self.out.insert("end", f"{strategy.detail}\n", "muted")
+                for step in strategy.steps:
+                    sign, tag = _REASON_STYLE.get(step.kind, _REASON_NEUTRAL)
+                    self.out.insert("end", f"{sign} {step.text}\n", tag)
+
             for it in result.items:
                 self.out.insert("end", f"{it.department_code}\n", "dept")
                 self.out.insert("end", f"{it.program_name}\n", "prog")

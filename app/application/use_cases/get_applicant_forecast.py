@@ -88,6 +88,9 @@ class ForecastResult:
     last_update: datetime | None  # tz-aware, settings.timezone
     p_excluded: float = 0.0       # доля сценариев, где модель увела самого абитуриента
     notes: list[Reason] = field(default_factory=list)  # общие пояснения к прогнозу
+    # Выжимка «что делать» перед списком направлений. None у старых снапшотов,
+    # собранных до её появления, — интерфейсы обязаны это переживать.
+    strategy: "Strategy | None" = None
 
 
 def _to_local(dt_naive_msk: datetime) -> datetime:
@@ -341,6 +344,250 @@ def _build_notes(p_excluded: float) -> list[Reason]:
     return notes
 
 
+class Outlook(str, Enum):
+    """Насколько всё хорошо в целом — чтобы UI мог подобрать тон."""
+    SAFE = "safe"          # пройду почти наверняка
+    LIKELY = "likely"      # скорее да, чем нет
+    RISKY = "risky"        # скорее нет, чем да
+    LONGSHOT = "longshot"  # шанс есть, но маленький
+
+
+@dataclass
+class Strategy:
+    """
+    Выжимка перед списком направлений: чем всё кончится и что делать.
+
+    Карточки отвечают на вопрос «какой у меня шанс здесь», но человек приходит
+    с другим вопросом — «что мне сделать, чтобы поступить». Ответ на него
+    разбросан по объяснениям под каждым направлением, и собрать его самому
+    трудно. Здесь он собран: один вывод, одна цифра и несколько шагов по
+    убыванию того, насколько они в руках самого абитуриента.
+    """
+    outlook: Outlook
+    headline: str          # чем всё скорее всего кончится
+    detail: str            # тот же вывод числом
+    steps: list[Reason]    # что делать, самое важное первым
+
+
+def _pct(x: float) -> str:
+    return f"{x * 100:.0f}%"
+
+
+def _quoted(name: str) -> str:
+    return f"«{name}»"
+
+
+def _outlook_for(chance_any: float) -> Outlook:
+    if chance_any >= 0.8:
+        return Outlook.SAFE
+    if chance_any >= 0.5:
+        return Outlook.LIKELY
+    if chance_any >= 0.2:
+        return Outlook.RISKY
+    return Outlook.LONGSHOT
+
+
+def _consent_step(items: list[ForecastItem], p_excluded: float) -> Reason | None:
+    """
+    Согласие — единственное, что решается одним действием и прямо сегодня.
+
+    Поэтому оно идёт первым: балл уже выставлен и не изменится, приоритеты
+    влияют лишь на то, куда именно вы попадёте, а без согласия не зачислят
+    никуда вообще.
+    """
+    comps = [it.competition for it in items if it.competition]
+    if not comps:
+        return None
+
+    if any(c.my_consent for c in comps):
+        return Reason(ReasonKind.GOOD, "Согласие подано — в конкурсе вы остаётесь.")
+
+    tail = (
+        f" Модель поэтому уводит вас в другой вуз в {_pct(p_excluded)} сценариев, "
+        f"а показанные шансы — при условии, что вы остаётесь."
+        if p_excluded > 0 else ""
+    )
+    return Reason(
+        ReasonKind.BAD,
+        "Согласия нет ни на одном направлении. Без него не зачислят даже туда, "
+        "где вы проходите по баллам — сейчас это важнее всего остального." + tail,
+    )
+
+
+def _exam_step(items: list[ForecastItem]) -> Reason | None:
+    """Оставшиеся экзамены — единственный способ ещё поднять свой балл."""
+    upcoming = [it for it in items if it.exam.state is ExamState.UPCOMING]
+    if not upcoming:
+        return None
+
+    nearest = min(
+        (it.exam.upcoming_dates[0] for it in upcoming if it.exam.upcoming_dates),
+        default=None,
+    )
+    when = f" Ближайший — {nearest.strftime('%d.%m в %H:%M')}." if nearest else ""
+    where = (
+        f"на {len(upcoming)} направлениях" if len(upcoming) > 1
+        else f"на направлении {_quoted(upcoming[0].program_name)}"
+    )
+    return Reason(
+        ReasonKind.NEUTRAL,
+        f"Экзамен ещё впереди {where} — это единственное, чем вы сейчас можете "
+        f"поднять свой балл.{when}",
+    )
+
+
+def _landing_step(items: list[ForecastItem], anchor: ForecastItem) -> Reason | None:
+    """
+    Откуда берутся нули на остальных направлениях.
+
+    Зачисляют ровно в одно место, поэтому шансы по направлениям — это не пять
+    независимых оценок, а одно распределение: вместе с «пролётом» они дают
+    100%. Ноль под направлением ниже приоритетом означает не «здесь вам не
+    светит», а «сюда очередь не дойдёт». Без этой строчки хорошая новость
+    читается как плохая.
+    """
+    if anchor.prob_cond is None or anchor.prob_cond < 0.5:
+        return None
+
+    spare = [
+        it for it in items
+        if it is not anchor and (it.prob_cond or 0.0) < 0.05
+    ]
+    if not spare:
+        return None
+
+    return Reason(
+        ReasonKind.GOOD,
+        f"Нули на остальных направлениях — не «нет шансов», а «туда не дойдёт»: "
+        f"зачисляют в одно место, и вы проходите на направление {_quoted(anchor.program_name)} "
+        f"({_pct(anchor.prob_cond)}). Остальные сработают, только если здесь не выйдет.",
+    )
+
+
+def _priority_step(items: list[ForecastItem], anchor: ForecastItem) -> Reason | None:
+    """
+    Стоит ли переставлять приоритеты.
+
+    Модель распределяет отложенным согласием: человек предлагает себя по
+    списку сверху вниз и оседает на самом приоритетном месте, куда проходит.
+    При таком правиле хитрить с порядком невыгодно — занизив желанное
+    направление, вы не повышаете шанс на остальные, а только теряете его.
+    """
+    if len(items) < 2:
+        return None
+
+    prio = anchor.competition.my_priority if anchor.competition else None
+    if prio and prio > 1:
+        first = items[0]
+        return Reason(
+            ReasonKind.NEUTRAL,
+            f"Вероятнее всего вы пройдёте на направление {_quoted(anchor.program_name)} — это "
+            f"приоритет {prio}, а не первый: на направлении {_quoted(first.program_name)} шанс "
+            f"{_pct(first.prob_cond or 0.0)}. Порядок при этом менять незачем — "
+            f"вас распределяют на самое приоритетное направление из доступных, "
+            f"так что ставить их стоит по настоящему желанию.",
+        )
+
+    return Reason(
+        ReasonKind.NEUTRAL,
+        "Приоритеты расставляйте по настоящему желанию: вас распределяют на самое "
+        "приоритетное направление из тех, куда вы проходите, поэтому занижать "
+        "желанное ради подстраховки бессмысленно — так можно только потерять его.",
+    )
+
+
+def _closest_step(items: list[ForecastItem]) -> Reason | None:
+    """Где не хватает меньше всего баллов — если пройти пока не выходит."""
+    gaps: list[tuple[float, ForecastItem]] = []
+    for it in items:
+        score = it.competition.my_total_score if it.competition else None
+        if score and it.q90 is not None and it.q90 > score:
+            gaps.append((it.q90 - score, it))
+    if not gaps:
+        return None
+
+    gap, item = min(gaps, key=lambda g: g[0])
+    return Reason(
+        ReasonKind.NEUTRAL,
+        f"Ближе всего вы к направлению {_quoted(item.program_name)}: ваш балл ниже "
+        f"нижней границы прогноза проходного примерно на {gap:.0f} "
+        f"{_plural(int(round(gap)), 'балл', 'балла', 'баллов')}.",
+    )
+
+
+def _surplus_step(items: list[ForecastItem]) -> Reason | None:
+    """
+    Направление, где желающих меньше, чем мест, — самая надёжная опора.
+
+    Шанс проверяем отдельно, хотя при недоборе он и так обязан быть высоким:
+    вуз публикует места и заявки порознь, и на несогласованных данных иначе
+    вышло бы «самая надёжная опора» под направлением с шансом 9%.
+    """
+    for it in items:
+        comp = it.competition
+        if (it.prob_cond or 0.0) < 0.5:
+            continue
+        if comp and comp.seats and comp.applications <= comp.seats:
+            return Reason(
+                ReasonKind.GOOD,
+                f"На направлении {_quoted(it.program_name)} заявок ({comp.applications}) меньше, "
+                f"чем мест ({comp.seats}) — это самая надёжная опора в вашем списке.",
+            )
+    return None
+
+
+def _build_strategy(
+    items: list[ForecastItem],
+    fail_cond: float,
+    p_excluded: float,
+) -> Strategy | None:
+    """Собрать выжимку. None — если считать не на чем (нет ни одного шанса)."""
+    if not items:
+        return None
+
+    scored = [it for it in items if it.prob_cond is not None]
+    if not scored:
+        return None
+
+    chance_any = max(0.0, min(1.0, 1.0 - fail_cond))
+    anchor = max(scored, key=lambda it: it.prob_cond or 0.0)
+    outlook = _outlook_for(chance_any)
+
+    named = (anchor.prob_cond or 0.0) >= 0.4
+    if outlook is Outlook.SAFE:
+        headline = (
+            f"Вы почти наверняка поступите — скорее всего на направление {_quoted(anchor.program_name)}."
+            if named else "Вы почти наверняка поступите, но пока не ясно, куда именно."
+        )
+    elif outlook is Outlook.LIKELY:
+        headline = (
+            f"Скорее всего вы поступите, вероятнее всего — на направление {_quoted(anchor.program_name)}."
+            if named else
+            "Скорее всего вы поступите, но шансы размазаны по нескольким направлениям."
+        )
+    elif outlook is Outlook.RISKY:
+        headline = "Расклад не в вашу пользу, но проходной сценарий есть."
+    else:
+        headline = "По нынешним данным пройти трудно — но кое-что ещё в ваших руках."
+
+    detail = (
+        f"Шанс поступить хоть куда-нибудь — {_pct(chance_any)}. "
+        f"Лучшее направление: {_quoted(anchor.program_name)}, {_pct(anchor.prob_cond or 0.0)}."
+    )
+
+    candidates = [
+        _consent_step(items, p_excluded),
+        _exam_step(items),
+        _surplus_step(items),
+        _landing_step(items, anchor),
+        _priority_step(items, anchor),
+        _closest_step(items) if chance_any < 0.8 else None,
+    ]
+    steps = [s for s in candidates if s is not None][:5]
+
+    return Strategy(outlook=outlook, headline=headline, detail=detail, steps=steps)
+
+
 class GetApplicantForecastUseCase:
     """
     Возвращает структурированный прогноз по коду абитуриента либо None,
@@ -417,4 +664,5 @@ class GetApplicantForecastUseCase:
             last_update=last_update,
             p_excluded=p_excl,
             notes=_build_notes(p_excl),
+            strategy=_build_strategy(items, fail_cond, p_excl),
         )

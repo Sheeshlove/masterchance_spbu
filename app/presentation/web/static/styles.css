@@ -261,6 +261,47 @@ code {
 .why-neutral .why-icon { color: var(--ink-faint); }
 .why-text { color: var(--ink-soft); }
 
+/* ── выжимка «как поступить» ─────────────────────────────────────────────── */
+/* Стоит перед карточками: человек приходит с вопросом «что мне делать»,
+   а карточки отвечают на «какой у меня шанс здесь». Тон задаёт outlook —
+   от него зависит только цвет полосы слева, текст готовит use case. */
+.plan {
+  margin-bottom: 22px; padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: var(--radius);
+}
+.plan-safe     { border-left-color: var(--ok); }
+.plan-likely   { border-left-color: var(--ok); }
+.plan-risky    { border-left-color: var(--wait); }
+.plan-longshot { border-left-color: var(--red); }
+
+.plan-label {
+  display: block;
+  font-family: var(--mono); font-weight: 500;
+  font-size: .7rem; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.plan-headline {
+  margin: 10px 0 0;
+  font-size: 1.05rem; line-height: 1.45; color: var(--ink);
+}
+.plan-detail {
+  margin: 6px 0 0;
+  font-size: .85rem; color: var(--ink-soft);
+}
+.plan-steps {
+  list-style: none; margin: 14px 0 0; padding: 0;
+  border-top: 1px solid var(--line);
+}
+.plan-step {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 0 0; margin-top: 10px;
+  font-size: .88rem;
+}
+.plan-step:first-child { border-top: none; }
+
 /* ── итог и сноски ───────────────────────────────────────────────────────── */
 .fail {
   margin-top: 22px; padding: 18px 20px;

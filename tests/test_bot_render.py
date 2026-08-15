@@ -215,3 +215,50 @@ def test_long_explanations_still_fit_telegram_limit():
 
     assert len(parts) > 1
     assert all(len(p) <= 4000 for p in parts)
+
+
+# ── выжимка «как поступить» ──────────────────────────────────────────────────
+
+def _strategy(**kw):
+    from app.application.use_cases.get_applicant_forecast import Outlook, Strategy
+
+    base = dict(
+        outlook=Outlook.SAFE,
+        headline="Вы почти наверняка поступите — скорее всего на направление «Матмод».",
+        detail="Шанс поступить хоть куда-нибудь — 96%.",
+        steps=[Reason(ReasonKind.GOOD, "Согласие подано — в конкурсе вы остаётесь.")],
+    )
+    base.update(kw)
+    return Strategy(**base)
+
+
+def test_strategy_opens_the_message():
+    """
+    В переписке человек читает сверху вниз и до конца доходит не всегда.
+    Ответ на «что мне делать» должен встречать его первым.
+    """
+    text = _render_forecast(_result(strategy=_strategy()))
+
+    assert "Как поступить" in text
+    assert text.index("Как поступить") < text.index("Ваши направления"), (
+        "выжимка ушла под список направлений"
+    )
+    assert "Согласие подано" in text
+
+
+def test_message_without_strategy_is_unchanged():
+    """Старый снапшот на руках не должен ронять ответ бота."""
+    text = _render_forecast(_result())
+
+    assert "Как поступить" not in text
+    assert text.startswith("📝 *Ваши направления*")
+
+
+def test_message_with_strategy_still_fits_telegram():
+    """Лимит Telegram — 4096 символов; выжимка не должна его подорвать."""
+    result = _result(strategy=_strategy(steps=[
+        Reason(ReasonKind.NEUTRAL, "Пояснение " * 20) for _ in range(5)
+    ]))
+
+    for part in split_message(_render_forecast(result)):
+        assert len(part) <= 4096
